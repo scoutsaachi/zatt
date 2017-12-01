@@ -3,9 +3,9 @@ import logging
 import statistics
 from random import randrange
 from os.path import join
-from .utils import PersistentDict, TallyCounter
-from .log import LogManager
-from .config import config
+from zatt.server.utils import PersistentDict, TallyCounter
+from zatt.server.log import LogManager
+import zatt.server.config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +24,10 @@ class State:
             self.log = old_state.log
         else:
             self.orchestrator = orchestrator
-            self.persist = PersistentDict(join(config.storage, 'state'),
+            self.persist = PersistentDict(join(cfg.config.getMyStorage(), 'state'),
                                           {'votedFor': None, 'currentTerm': 0})
-            self.volatile = {'leaderId': None, 'cluster': config.cluster,
-                             'address': config.address}
+            self.volatile = {'leaderId': None, 'cluster': cfg.config.cluster.copy(),
+                             'address': cfg.config.getMyClusterInfo()}
             self.log = LogManager()
             self._update_cluster()
         self.stats = TallyCounter(['read', 'write', 'append'])
@@ -124,7 +124,7 @@ class Follower(State):
         if hasattr(self, 'election_timer'):
             self.election_timer.cancel()
 
-        timeout = randrange(1, 4) * 10 ** (0 if config.debug else -1)
+        timeout = randrange(1, 4) * 10 ** (0 if cfg.config.debug else -1)
         loop = asyncio.get_event_loop()
         self.election_timer = loop.\
             call_later(timeout, self.orchestrator.change_state, Candidate)
@@ -286,7 +286,7 @@ class Leader(State):
                          len(msg['entries']), peer, self.nextIndex[peer])
             self.orchestrator.send_peer(peer, msg)
 
-        timeout = randrange(1, 4) * 10 ** (-1 if config.debug else -2)
+        timeout = randrange(1, 4) * 10 ** (-1 if cfg.config.debug else -2)
         loop = asyncio.get_event_loop()
         self.append_timer = loop.call_later(timeout, self.send_append_entries)
 
@@ -340,7 +340,7 @@ class Leader(State):
         pending_configs = tuple(filter(lambda x: x['data']['key'] == 'cluster',
                                 self.log[self.log.commitIndex + 1:]))
         if pending_configs:
-            timeout = randrange(1, 4) * 10 ** (0 if config.debug else -1)
+            timeout = randrange(1, 4) * 10 ** (0 if cfg.config.debug else -1)
             loop = asyncio.get_event_loop()
             self.config_timer = loop.\
                 call_later(timeout, self.on_client_config, protocol, msg)

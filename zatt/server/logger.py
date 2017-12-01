@@ -1,8 +1,8 @@
 import logging
 import asyncio
 from datetime import datetime
-from .config import config
 from logging.config import dictConfig
+import zatt.server.config as cfg
 
 
 def tick():
@@ -36,10 +36,10 @@ def start_logger():
                  'extra': {'server_id': 1}}
             }
         }
-    if config.debug:
-        logging_config['handlers']['console']['formatter'] = 'develop'
-        logging_config['loggers']['']['level'] = 'DEBUG'
-        loop = asyncio.get_event_loop()
-        loop.call_later(1, tick)
+    if cfg.config.debug:
+    	logging_config['handlers']['console']['formatter'] = 'develop'
+    	logging_config['loggers']['']['level'] = 'DEBUG'
+    	loop = asyncio.get_event_loop()
+    	loop.call_later(1, tick)
 
     dictConfig(logging_config)

@@ -2,9 +2,9 @@ import asyncio
 import os
 import msgpack
 import logging
-from .states import Follower
-from .config import config
-from .utils import extended_msgpack_serializer
+from zatt.server.states import Follower
+import zatt.server.config as cfg
+from zatt.server.utils import extended_msgpack_serializer
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class Orchestrator():
     switching between Follower, Candidate and Leader when necessary.
     Only one Orchestrator """
     def __init__(self):
-        os.makedirs(config.storage, exist_ok=True)
+        os.makedirs(cfg.config.getMyStorage(), exist_ok=True)
         self.state = Follower(orchestrator=self)
 
     def change_state(self, new_state):

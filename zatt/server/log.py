@@ -3,7 +3,7 @@ import msgpack
 import collections
 import asyncio
 import logging
-from .config import config
+import zatt.server.config as cfg
 from zatt.server import utils
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class Log(collections.UserList):
     def __init__(self, erase_log=False):
         super().__init__()
-        self.path = os.path.join(config.storage, 'log')
+        self.path = os.path.join(cfg.config.getMyStorage(), 'log')
         #  load
         logger.debug('Initializing log')
         if erase_log and os.path.isfile(self.path):
@@ -41,7 +41,7 @@ class Compactor():
         self.count = count
         self.term = term
         self.data = data
-        self.path = os.path.join(config.storage, 'compact')
+        self.path = os.path.join(cfg.config.getMyStorage(), 'compact')
         #  load
         logger.debug('Initializing compactor')
         if count or term or data:

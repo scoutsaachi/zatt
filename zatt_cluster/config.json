@@ -1,0 +1,13 @@
+{  
+    "StorageDir":"zatt_cluster/storage",
+    "cluster":[  
+       [  
+          "127.0.0.1",
+          5254
+       ],
+       [  
+          "127.0.0.1",
+          5255
+       ]
+    ]
+ }
