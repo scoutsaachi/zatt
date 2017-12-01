@@ -22,6 +22,7 @@ def setup(config={}):
                               *config.address)
     server = loop.run_until_complete(coro)
 
+    logger.info('BST ZATT2')
     logger.info('Serving on %s', config.address)
     return server
 
