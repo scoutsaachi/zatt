@@ -8,7 +8,7 @@ class DistributedDict(collections.UserDict, AbstractClient):
     def __init__(self, addr, port, append_retry_attempts=3,
                  refresh_policy=RefreshPolicyAlways()):
         super().__init__()
-        self.data['cluster'] = [(addr, port)]
+        self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
         self.refresh_policy = refresh_policy
         self.refresh(force=True)
@@ -35,6 +35,7 @@ class DistributedDict(collections.UserDict, AbstractClient):
     def refresh(self, force=False):
         if force or self.refresh_policy.can_update():
             self.data = self._get_state()
+            self.data['cluster'] = set( [tuple(c) for c in self.data['cluster']] )
 
     def _append_log(self, payload):
         for attempt in range(self.append_retry_attempts):

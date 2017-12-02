@@ -27,7 +27,7 @@ class AbstractClient:
 
     def _get_state(self):
         """Retrive remote state machine."""
-        self.server_address = tuple(random.choice(self.data['cluster']))
+        self.server_address = tuple(random.choice(tuple(self.data['cluster'])))
         return self._request({'type': 'get'})
 
     def _append_log(self, payload):
