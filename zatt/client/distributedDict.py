@@ -35,7 +35,6 @@ class DistributedDict(collections.UserDict, AbstractClient):
     def refresh(self, force=False):
         if force or self.refresh_policy.can_update():
             self.data = self._get_state()
-            self.data['cluster'] = set( [tuple(c) for c in self.data['cluster']] )
 
     def _append_log(self, payload):
         for attempt in range(self.append_retry_attempts):

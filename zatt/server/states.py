@@ -151,7 +151,7 @@ class Follower(State):
                     'term': self.persist['currentTerm']}
         self.orchestrator.send_peer(peer, response)
 
-    def on_peer_append_entries(self, peer, msg):
+    def on_peer_update(self, peer, msg):
         """Manages incoming log entries from the Leader.
         Data from log compaction is always accepted.
         In the end, the log is scanned for a new cluster config.
@@ -164,14 +164,15 @@ class Follower(State):
         success = term_is_current and prev_log_term_match
 
         if 'compact_data' in msg:
-            self.log = LogManager(compact_count=msg['compact_count'],
-                                  compact_term=msg['compact_term'],
-                                  compact_data=msg['compact_data'])
-            self.volatile['leaderId'] = msg['leaderId']
-            logger.debug('Initialized Log with compact data from Leader')
+            assert False
+            # self.log = LogManager(compact_count=msg['compact_count'],
+            #                       compact_term=msg['compact_term'],
+            #                       compact_data=msg['compact_data'])
+            # self.volatile['leaderId'] = msg['leaderId']
+            # logger.debug('Initialized Log with compact data from Leader')
         elif success:
-            self.log.append_entries(msg['entries'], msg['prevLogIndex'])
-            self.log.commit(msg['leaderCommit'])
+            self.log.pre_prepare_entries(msg['entries'], msg['prevLogIndex']) # append the entries
+            self.log.commit(msg['leaderCommit']) # update the commit point
             self.volatile['leaderId'] = msg['leaderId']
             logger.debug('Log index is now %s', self.log.index)
             self.stats.increment('append', len(msg['entries']))
@@ -181,7 +182,7 @@ class Follower(State):
 
         self._update_cluster()
 
-        resp = {'type': 'response_append', 'success': success,
+        resp = {'type': 'response_update', 'success': success,
                 'term': self.persist['currentTerm'],
                 'matchIndex': self.log.index}
         self.orchestrator.send_peer(peer, resp)
@@ -213,11 +214,11 @@ class Candidate(Follower):
                'lastLogTerm': self.log.term()}
         self.orchestrator.broadcast_peers(msg)
 
-    def on_peer_append_entries(self, peer, msg):
-        """Transition back to Follower upon receiving an append_entries."""
+    def on_peer_update(self, peer, msg):
+        """Transition back to Follower upon receiving an update RPC."""
         logger.debug('Converting to Follower')
         self.orchestrator.change_state(Follower)
-        self.orchestrator.state.on_peer_append_entries(peer, msg)
+        self.orchestrator.state.on_peer_update(peer, msg)
 
     def on_peer_response_vote(self, peer, msg):
         """Register peers votes, transition to Leader upon majority vote."""
@@ -237,11 +238,11 @@ class Leader(State):
         self.volatile['leaderId'] = self.volatile['address']
         self.matchIndex = {p: 0 for p in self.volatile['cluster']}
         self.nextIndex = {p: self.log.commitIndex + 1 for p in self.matchIndex}
-        self.waiting_clients = {}
-        self.send_append_entries()
+        self.waiting_clients = {} # log index -> [protocol for a client]
+        self.send_update()
 
         if 'cluster' not in self.log.state_machine:
-            self.log.append_entries([
+            self.log.pre_prepare_entries([
                 {'term': self.persist['currentTerm'],
                  'data':{'key': 'cluster',
                          'value': tuple(self.volatile['cluster']),
@@ -251,7 +252,7 @@ class Leader(State):
 
     def teardown(self):
         """Stop timers before changing state."""
-        self.append_timer.cancel()
+        self.update_timer.cancel()
         if hasattr(self, 'config_timer'):
             self.config_timer.cancel()
         for clients in self.waiting_clients.values():
@@ -259,16 +260,16 @@ class Leader(State):
                 client.send({'type': 'result', 'success': False})
                 logger.error('Sent unsuccessful response to client')
 
-    def send_append_entries(self):
-        """Send append_entries to the cluster, containing:
+    def send_update(self):
+        """Send update to the cluster, containing:
         - nothing: if remote node is up to date.
         - compacted log: if remote node has to catch up.
         - log entries: if available.
-        Finally schedules itself for later esecution."""
+        Finally schedules itself for later execution."""
         for peer in self.volatile['cluster']:
             if peer == self.volatile['address']:
                 continue
-            msg = {'type': 'append_entries',
+            msg = {'type': 'update',
                    'term': self.persist['currentTerm'],
                    'leaderCommit': self.log.commitIndex,
                    'leaderId': self.volatile['address'],
@@ -278,6 +279,7 @@ class Leader(State):
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
 
             if self.nextIndex[peer] <= self.log.compacted.index:
+                assert False # should never happen since we're not compacting
                 msg.update({'compact_data': self.log.compacted.data,
                             'compact_term': self.log.compacted.term,
                             'compact_count': self.log.compacted.count})
@@ -286,12 +288,12 @@ class Leader(State):
                          len(msg['entries']), peer, self.nextIndex[peer])
             self.orchestrator.send_peer(peer, msg)
 
-        timeout = randrange(1, 4) * 10 ** (-1 if cfg.config.debug else -2)
+        timeout = randrange(1, 4) * 10 ** (-1 if cfg.config.debug else -2) 
         loop = asyncio.get_event_loop()
-        self.append_timer = loop.call_later(timeout, self.send_append_entries)
+        self.update_timer = loop.call_later(timeout, self.send_update)
 
-    def on_peer_response_append(self, peer, msg):
-        """Handle peer response to append_entries.
+    def on_peer_response_update(self, peer, msg):
+        """Handle peer response to update RPC.
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
         if msg['success']:
@@ -300,23 +302,27 @@ class Leader(State):
 
             self.matchIndex[self.volatile['address']] = self.log.index
             self.nextIndex[self.volatile['address']] = self.log.index + 1
+            # look at match index for all followers and see where
+            # global commit point is
             index = statistics.median_low(self.matchIndex.values())
             self.log.commit(index)
             self.send_client_append_response()
         else:
+            # to aggressive so move index for this peer back one
             self.nextIndex[peer] = max(0, self.nextIndex[peer] - 1)
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
         entry = {'term': self.persist['currentTerm'], 'data': msg['data']}
-        if msg['data']['key'] == 'cluster':
+        print("entry:", entry)
+        if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})
-        self.log.append_entries([entry], self.log.index)
+        self.log.pre_prepare_entries([entry], self.log.index) # append to our own log
         if self.log.index in self.waiting_clients:
-            self.waiting_clients[self.log.index].append(protocol)
+            self.waiting_clients[self.log.index].append(protocol) # schedule client to be notified
         else:
             self.waiting_clients[self.log.index] = [protocol]
-        self.on_peer_response_append(
+        self.on_peer_response_update(
             self.volatile['address'], {'success': True,
                                        'matchIndex': self.log.commitIndex})
 
@@ -362,7 +368,7 @@ class Leader(State):
         else:
             success = False
         if success:
-            self.log.append_entries([
+            self.log.pre_prepare_entries([
                 {'term': self.persist['currentTerm'],
                  'data':{'key': 'cluster', 'value': tuple(cluster),
                          'action': 'change'}}],

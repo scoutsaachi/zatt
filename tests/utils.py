@@ -57,7 +57,7 @@ class Pool:
     def _generate_configs(self, numIds):
         storage_dir = "%s/persistStorage" % os.path.abspath(os.path.dirname(__file__))
         cluster_vals = [('127.0.0.1', 9110 + server_id) for server_id in range(numIds)]
-        self.configs = [Config(storage_dir, cluster_vals, server_id, False) for server_id in range(numIds)]
+        self.configs = [Config(storage_dir, cluster_vals, server_id, True) for server_id in range(numIds)]
 
         # for server_id in server_ids:
         #     config = copy.deepcopy(shared)

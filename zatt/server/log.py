@@ -22,7 +22,13 @@ class Log(collections.UserList):
             self.data = utils.msgpack_appendable_unpack(self.path)
             logger.debug('Using persisted data')
 
-    def append_entries(self, entries, start):
+
+    def pre_prepare_entries(self, entries, start):
+        """
+        Pre-prepare an entry to the log
+        @params start: prevLogIndex
+        @params entires:
+        """
         if len(self.data) >= start:
             self.replace(self.data[:start] + entries)
         else:
@@ -118,10 +124,10 @@ class LogManager:
         else:
             return self[index]['term']
 
-    def append_entries(self, entries, prevLogIndex):
-        self.log.append_entries(entries, prevLogIndex - self.compacted.index)
+    def pre_prepare_entries(self, entries, prevLogIndex):
+        self.log.pre_prepare_entries(entries, prevLogIndex - self.compacted.index)
         if entries:
-            logger.debug('Appending. New log: %s', self.log.data)
+            logger.debug('Pre-Prepare. New log: %s', self.log.data)
 
     def commit(self, leaderCommit):
         if leaderCommit <= self.commitIndex:
@@ -133,7 +139,7 @@ class LogManager:
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
         logger.debug('State machine: %s', self.state_machine.data)
-        self.compaction_timer_touch()
+        # self.compaction_timer_touch()
 
     def compact(self):
         del self.compaction_timer
