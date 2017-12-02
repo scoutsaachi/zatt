@@ -93,8 +93,10 @@ class LogManager:
         self.log = Log(erase_log)
         self.compacted = Compactor(compact_count, compact_term, compact_data)
         self.state_machine = machine(data=self.compacted.data,
-                                     lastApplied=self.compacted.index)
-        self.commitIndex = self.compacted.index + len(self.log)
+                                     lastApplied=-1)
+        self.commitIndex = len(self.log) - 1
+        # TODO persist prepareIndex
+        self.prepareIndex = -1 # nothing has yet been prepared. prepareIndex is inclusive
         self.state_machine.apply(self, self.commitIndex)
 
     def __getitem__(self, index):
@@ -110,7 +112,7 @@ class LogManager:
     @property
     def index(self):
         """Log tip index."""
-        return self.compacted.index + len(self.log)
+        return len(self.log) - 1
 
     def term(self, index=None):
         """Return a term given a log index. If no index is passed, return
@@ -119,33 +121,39 @@ class LogManager:
             return self.term(self.index)
         elif index == -1:
             return 0
-        elif not len(self.log) or index <= self.compacted.index:
+        elif not len(self.log) or index <= -1:
             return self.compacted.term
         else:
             return self[index]['term']
 
     def pre_prepare_entries(self, entries, prevLogIndex):
-        self.log.pre_prepare_entries(entries, prevLogIndex - self.compacted.index)
+        self.log.pre_prepare_entries(entries, prevLogIndex + 1)
         if entries:
-            logger.debug('Pre-Prepare. New log: %s', self.log.data)
+            print('Pre-Prepare. New log: %s', self.log.data)
 
     def commit(self, leaderCommit):
         if leaderCommit <= self.commitIndex:
             return
 
         self.commitIndex = min(leaderCommit, self.index)  # no overshoots
-        logger.debug('Advancing commit to %s', self.commitIndex)
+        print('Advancing commit to %s' % self.commitIndex)
         # above is the actual commit operation, just incrementing the counter!
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
-        logger.debug('State machine: %s', self.state_machine.data)
+        print('State machine: %s' % self.state_machine.data)
         # self.compaction_timer_touch()
+    
+    def prepare(self, leaderPrepare):
+        if leaderPrepare <= self.prepareIndex:
+            return
+        self.prepareIndex = min(leaderPrepare, self.index)  # no overshoots
+        print('Advancing prepare to %s' % self.prepareIndex)        
 
     def compact(self):
         del self.compaction_timer
         if self.commitIndex - self.compacted.count < 60:
             return
-        logger.debug('Compaction started')
+        print('Compaction started')
         not_compacted_log = self[self.state_machine.lastApplied + 1:]
         self.compacted.data = self.state_machine.data.copy()
         self.compacted.term = self.term(self.state_machine.lastApplied)
@@ -153,8 +161,8 @@ class LogManager:
         self.compacted.persist()
         self.log.replace(not_compacted_log)
 
-        logger.debug('Compacted: %s', self.compacted.data)
-        logger.debug('Log: %s', self.log.data)
+        print('Compacted: %s'% self.compacted.data)
+        print('Log: %s' % self.log.data)
 
     def compaction_timer_touch(self):
         """Periodically initiates compaction."""

@@ -91,7 +91,7 @@ class State:
         if type(self) is Leader:
             msg.update({'leaderStatus':
                         {'netIndex': tuple(self.nextIndex.items()),
-                         'matchIndex': tuple(self.matchIndex.items()),
+                         'prePrepareIndex': tuple(self.prePrepareIndexMap.items()),
                          'waiting_clients': {k: len(v) for (k, v) in
                                              self.waiting_clients.items()}}})
         protocol.send(msg)
@@ -161,7 +161,9 @@ class Follower(State):
         term_is_current = msg['term'] >= self.persist['currentTerm']
         prev_log_term_match = msg['prevLogTerm'] is None or\
             self.log.term(msg['prevLogIndex']) == msg['prevLogTerm']
-        success = term_is_current and prev_log_term_match
+        # check to make sure we are not pre-preparing an index that is already prepared
+        does_not_overwite_prepare = self.log.prepareIndex < msg['prevLogIndex'] + 1
+        success = term_is_current and prev_log_term_match and does_not_overwite_prepare
 
         if 'compact_data' in msg:
             assert False
@@ -172,6 +174,7 @@ class Follower(State):
             # logger.debug('Initialized Log with compact data from Leader')
         elif success:
             self.log.pre_prepare_entries(msg['entries'], msg['prevLogIndex']) # append the entries
+            self.log.prepare(msg['leaderPrepare'])
             self.log.commit(msg['leaderCommit']) # update the commit point
             self.volatile['leaderId'] = msg['leaderId']
             logger.debug('Log index is now %s', self.log.index)
@@ -184,7 +187,9 @@ class Follower(State):
 
         resp = {'type': 'response_update', 'success': success,
                 'term': self.persist['currentTerm'],
-                'matchIndex': self.log.index}
+                'prePrepareIndex': self.log.index,
+                'prepareIndex': self.log.prepareIndex
+                }
         self.orchestrator.send_peer(peer, resp)
 
 
@@ -236,8 +241,9 @@ class Leader(State):
         super().__init__(old_state, orchestrator)
         logger.info('Leader of term: %s', self.persist['currentTerm'])
         self.volatile['leaderId'] = self.volatile['address']
-        self.matchIndex = {p: 0 for p in self.volatile['cluster']}
-        self.nextIndex = {p: self.log.commitIndex + 1 for p in self.matchIndex}
+        self.prePrepareIndexMap = {p: 0 for p in self.volatile['cluster']} # latest pre-Prepare point per follower
+        self.nextIndexMap = {p: self.log.commitIndex + 1 for p in self.prePrepareIndexMap}
+        self.prepareIndexMap = {p: 0 for p in self.volatile['cluster']} # latest prepare position per follower
         self.waiting_clients = {} # log index -> [protocol for a client]
         self.send_update()
 
@@ -272,20 +278,21 @@ class Leader(State):
             msg = {'type': 'update',
                    'term': self.persist['currentTerm'],
                    'leaderCommit': self.log.commitIndex,
+                   'leaderPrepare': self.log.prepareIndex, # all logs up to this point are prepared
                    'leaderId': self.volatile['address'],
-                   'prevLogIndex': self.nextIndex[peer] - 1,
-                   'entries': self.log[self.nextIndex[peer]:
-                                       self.nextIndex[peer] + 100]}
+                   'prevLogIndex': self.nextIndexMap[peer] - 1,
+                   'entries': self.log[self.nextIndexMap[peer]:
+                                       self.nextIndexMap[peer] + 100]}
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
 
-            if self.nextIndex[peer] <= self.log.compacted.index:
+            if self.nextIndexMap[peer] <= self.log.compacted.index:
                 assert False # should never happen since we're not compacting
-                msg.update({'compact_data': self.log.compacted.data,
-                            'compact_term': self.log.compacted.term,
-                            'compact_count': self.log.compacted.count})
+                # msg.update({'compact_data': self.log.compacted.data,
+                #             'compact_term': self.log.compacted.term,
+                #             'compact_count': self.log.compacted.count})
 
             logger.debug('Sending %s entries to %s. Start index %s',
-                         len(msg['entries']), peer, self.nextIndex[peer])
+                         len(msg['entries']), peer, self.nextIndexMap[peer])
             self.orchestrator.send_peer(peer, msg)
 
         timeout = randrange(1, 4) * 10 ** (-1 if cfg.config.debug else -2) 
@@ -297,19 +304,24 @@ class Leader(State):
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
         if msg['success']:
-            self.matchIndex[peer] = msg['matchIndex']
-            self.nextIndex[peer] = msg['matchIndex'] + 1
+            self.prePrepareIndexMap[peer] = msg['prePrepareIndex']
+            self.nextIndexMap[peer] = msg['prePrepareIndex'] + 1
+            self.prepareIndexMap[peer] = msg['prepareIndex']
 
-            self.matchIndex[self.volatile['address']] = self.log.index
-            self.nextIndex[self.volatile['address']] = self.log.index + 1
+            self.prePrepareIndexMap[self.volatile['address']] = self.log.index
+            self.nextIndexMap[self.volatile['address']] = self.log.index + 1
+            self.prepareIndexMap[self.volatile['address']] = self.log.prepareIndex
             # look at match index for all followers and see where
             # global commit point is
-            index = statistics.median_low(self.matchIndex.values())
-            self.log.commit(index)
+            prepareIndex = statistics.median_low(self.prePrepareIndexMap.values())
+            self.log.prepare(prepareIndex)
+
+            commitIndex = statistics.median_low(self.prepareIndexMap.values())
+            self.log.commit(commitIndex)
             self.send_client_append_response()
         else:
             # to aggressive so move index for this peer back one
-            self.nextIndex[peer] = max(0, self.nextIndex[peer] - 1)
+            self.nextIndexMap[peer] = max(0, self.nextIndexMap[peer] - 1)
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
@@ -324,7 +336,8 @@ class Leader(State):
             self.waiting_clients[self.log.index] = [protocol]
         self.on_peer_response_update(
             self.volatile['address'], {'success': True,
-                                       'matchIndex': self.log.commitIndex})
+                                       'prePrepareIndex': self.log.index,
+                                       'prepareIndex': self.log.prepareIndex})
 
     def send_client_append_response(self):
         """Respond to client upon commitment of log entries."""
@@ -358,13 +371,13 @@ class Leader(State):
         if msg['action'] == 'add' and peer not in cluster:
             logger.info('Adding node %s', peer)
             cluster.add(peer)
-            self.nextIndex[peer] = 0
-            self.matchIndex[peer] = 0
+            self.nextIndexMap[peer] = 0
+            self.prePrepareIndexMap[peer] = 0
         elif msg['action'] == 'delete' and peer in cluster:
             logger.info('Removing node %s', peer)
             cluster.remove(peer)
-            del self.nextIndex[peer]
-            del self.matchIndex[peer]
+            del self.nextIndexMap[peer]
+            del self.prePrepareIndexMap[peer]
         else:
             success = False
         if success:
