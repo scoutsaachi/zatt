@@ -36,6 +36,7 @@ def start_logger():
                  'extra': {'server_id': 1}}
             }
         }
+    print (cfg.config.debug)
     if cfg.config.debug:
     	logging_config['handlers']['console']['formatter'] = 'develop'
     	logging_config['loggers']['']['level'] = 'DEBUG'

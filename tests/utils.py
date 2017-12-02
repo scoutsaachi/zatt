@@ -1,4 +1,5 @@
 import copy
+import os
 import asyncio
 import shutil
 import random
@@ -6,18 +7,20 @@ import string
 import logging
 from multiprocessing import Process
 from zatt.server.main import setup
+from zatt.server.config import Config
 
 
 class Pool:
-    def __init__(self, server_ids):
-        if type(server_ids) is int:
-            server_ids = range(server_ids)
-        self._generate_configs(server_ids)
+    def __init__(self, num_servers):
+        # if type(server_ids) is int:
+        #     server_ids = range(server_ids)
+        self._generate_configs(num_servers)
         self.servers = {}
-        for config in self.configs.values():
-            print('Generating server', config['test_id'])
-            self.servers[config['test_id']] = (Process(target=self._run_server,
-                                                       args=(config,)))
+        self.server_ids = [i for i in range(num_servers)]
+        for c in self.configs:
+            print('Generating server', c.nodeID)
+            self.servers[c.nodeID] = (Process(target=self._run_server,
+                                                       args=(c,)))
 
     def start(self, n):
         if type(n) is int:
@@ -40,7 +43,7 @@ class Pool:
         if type(n) is int:
             n = [n]
         for x in n:
-            shutil.rmtree(self.configs[x]['storage'])
+            shutil.rmtree(self.configs[x].getMyStorage())
             print('Removing files related to server', x)
 
     @property
@@ -49,21 +52,19 @@ class Pool:
 
     @property
     def ids(self):
-        return list(self.configs.keys())
+        return self.server_ids.copy()
 
-    def _generate_configs(self, server_ids):
-        shared = {'cluster': set(), 'storage': '{}.persist', 'debug': False}
+    def _generate_configs(self, numIds):
+        storage_dir = "%s/persistStorage" % os.path.abspath(os.path.dirname(__file__))
+        cluster_vals = [('127.0.0.1', 9110 + server_id) for server_id in range(numIds)]
+        self.configs = [Config(storage_dir, cluster_vals, server_id, False) for server_id in range(numIds)]
 
-        for server_id in server_ids:
-            shared['cluster'].add(('127.0.0.1', 9110 + server_id))
-
-        self.configs = {}
-        for server_id in server_ids:
-            config = copy.deepcopy(shared)
-            config['storage'] = config['storage'].format(server_id)
-            config['address'] = ('127.0.0.1', 9110 + server_id)
-            config['test_id'] = server_id
-            self.configs[server_id] = config
+        # for server_id in server_ids:
+        #     config = copy.deepcopy(shared)
+        #     config['storage'] = config['storage'].format(server_id)
+        #     config['address'] = ('127.0.0.1', 9110 + server_id)
+        #     config['test_id'] = server_id
+        #     self.configs[server_id] = config
 
     def _run_server(self, config):
         setup(config)

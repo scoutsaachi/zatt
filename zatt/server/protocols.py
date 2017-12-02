@@ -23,9 +23,11 @@ class Orchestrator():
         self.state = new_state(old_state=self.state)
 
     def data_received_peer(self, sender, message):
+        # logger.info("DATA WAS RECEIVED on peer while in state %s" % type(self.state).__name__)
         self.state.data_received_peer(sender, message)
 
     def data_received_client(self, transport, message):
+        # logger.info("DATA WAS RECEIVED")
         self.state.data_received_client(transport, message)
 
     def send(self, transport, message):

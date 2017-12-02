@@ -10,14 +10,9 @@ from zatt.server.config import Config
 from zatt.server.protocols import Orchestrator, PeerProtocol, ClientProtocol
 from zatt.server.logger import start_logger
 
-parser = argparse.ArgumentParser(description='Start node for Raft BFT')
-parser.add_argument('configFile', type=str, help='the configuration file')
-parser.add_argument('id', type=int, help='the node id to be started')
-parser.add_argument('--debug',type=bool, default=False, help="print debugger log")
-args = parser.parse_args()
-
-def setup():
+def setup(config):
     """Setup a node."""
+    cfg.config = config
     start_logger()
     logger = logging.getLogger(__name__)
 
@@ -39,8 +34,13 @@ def setup():
 
 def run():
     """Start a node."""
-    cfg.config = Config.CreateConfig(args.configFile, args.id, args.debug)
-    server = setup()
+    parser = argparse.ArgumentParser(description='Start node for Raft BFT')
+    parser.add_argument('configFile', type=str, help='the configuration file')
+    parser.add_argument('id', type=int, help='the node id to be started')
+    parser.add_argument('--debug',type=bool, default=False, help="print debugger log")
+    args = parser.parse_args()
+    config = Config.CreateConfig(args.configFile, args.id, args.debug)
+    server = setup(config)
     loop = asyncio.get_event_loop()
     try:
         loop.run_forever()
