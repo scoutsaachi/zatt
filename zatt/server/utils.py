@@ -5,6 +5,7 @@ import asyncio
 import logging
 import collections
 import msgpack
+import math
 
 MAX_MSGPACK_ARRAY_HEADER_LEN = 5
 logger = logging.getLogger(__name__)
@@ -107,3 +108,13 @@ def extended_msgpack_serializer(obj):
         return serial
     else:
         raise TypeError("Type not serializable")
+
+# extract kth largest element from list l
+def get_kth_smallest(l, k):
+    l = sorted(l)
+    return l[k-1]
+
+# get 2f +1
+def get_quorum_size(n):
+    assert (n-1) % 3 == 0
+    return math.ceil((float(n-1)*(2/3)) + 1)

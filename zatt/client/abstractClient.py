@@ -29,6 +29,7 @@ class AbstractClient:
         """Retrive remote state machine."""
         self.server_address = tuple(random.choice(tuple(self.data['cluster'])))
         resp = self._request({'type': 'get'})
+        print("RESPONSE", resp)
         resp['cluster'] = set( [tuple(c) for c in resp['cluster']] )
         return resp
 

@@ -5,6 +5,7 @@ from random import randrange
 from os.path import join
 from zatt.server.utils import PersistentDict, TallyCounter
 from zatt.server.log import LogManager
+from zatt.server.utils import get_kth_smallest, get_quorum_size
 import zatt.server.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -313,10 +314,13 @@ class Leader(State):
             self.prepareIndexMap[self.volatile['address']] = self.log.prepareIndex
             # look at match index for all followers and see where
             # global commit point is
-            prepareIndex = statistics.median_low(self.prePrepareIndexMap.values())
+            quorum_size = get_quorum_size(len(self.prepareIndexMap))
+            prepareIndex = get_kth_smallest(self.prePrepareIndexMap.values(), quorum_size)
+            #prepareIndex = statistics.median_low(self.prePrepareIndexMap.values())
             self.log.prepare(prepareIndex)
 
-            commitIndex = statistics.median_low(self.prepareIndexMap.values())
+            commitIndex = get_kth_smallest(self.prepareIndexMap.values(), quorum_size)
+            #commitIndex = statistics.median_low(self.prepareIndexMap.values())
             self.log.commit(commitIndex)
             self.send_client_append_response()
         else:
