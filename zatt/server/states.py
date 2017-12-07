@@ -27,8 +27,10 @@ class State:
             self.orchestrator = orchestrator
             self.persist = PersistentDict(join(cfg.config.getMyStorage(), 'state'),
                                           {'votedFor': None, 'currentTerm': 0})
-            self.volatile = {'leaderId': None, 'cluster': cfg.config.cluster.copy(),
-                             'address': cfg.config.getMyClusterInfo()}
+            self.volatile = {'leaderId': None, 'cluster': cfg.config.cluster.keys(),
+                             'publicKeyMap': cfg.config.cluster.copy(),
+                             'address': cfg.config.getMyClusterInfo(),
+                             'privateKey': cfg.config.getMyPrivateKey()}
             self.log = LogManager()
             self._update_cluster()
         self.stats = TallyCounter(['read', 'write', 'append'])
@@ -175,8 +177,8 @@ class Follower(State):
             # logger.debug('Initialized Log with compact data from Leader')
         elif success:
             self.log.pre_prepare_entries(msg['entries'], msg['prevLogIndex']) # append the entries
-            self.log.prepare(msg['leaderPrepare'])
-            self.log.commit(msg['leaderCommit']) # update the commit point
+            self.log.prepare(msg['leaderPrepare']) # update the prepare point based on leader
+            self.log.commit(msg['leaderCommit']) # update the commit point based on leader
             self.volatile['leaderId'] = msg['leaderId']
             logger.debug('Log index is now %s', self.log.index)
             self.stats.increment('append', len(msg['entries']))
@@ -185,7 +187,8 @@ class Follower(State):
                 term' if not term_is_current else 'prev log term mismatch')
 
         self._update_cluster()
-
+        liePrepareIndex = self.log.prepareIndex if self.volatile['address'][1] != 9112 else 10
+        print("liePrepareIndex", self.volatile['address'][1], liePrepareIndex)
         resp = {'type': 'response_update', 'success': success,
                 'term': self.persist['currentTerm'],
                 'prePrepareIndex': self.log.index,

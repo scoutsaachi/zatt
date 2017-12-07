@@ -8,6 +8,7 @@ import logging
 from multiprocessing import Process
 from zatt.server.main import setup
 from zatt.server.config import Config
+from Crypto.PublicKey import RSA
 
 
 class Pool:
@@ -56,15 +57,12 @@ class Pool:
 
     def _generate_configs(self, numIds):
         storage_dir = "%s/persistStorage" % os.path.abspath(os.path.dirname(__file__))
-        cluster_vals = [('127.0.0.1', 9110 + server_id) for server_id in range(numIds)]
-        self.configs = [Config(storage_dir, cluster_vals, server_id, True) for server_id in range(numIds)]
+        keys = [RSA.generate(2048) for i in range(numIds)]
 
-        # for server_id in server_ids:
-        #     config = copy.deepcopy(shared)
-        #     config['storage'] = config['storage'].format(server_id)
-        #     config['address'] = ('127.0.0.1', 9110 + server_id)
-        #     config['test_id'] = server_id
-        #     self.configs[server_id] = config
+        clusterAddresses = [("127.0.0.1", 9110 + i) for i in range(numIds)] # [(ip_addr, port)]
+        clusterMap = {k:keys[i].publickey() for i,k in enumerate(clusterAddresses)} #[(ip_addr, port) -> public key]
+        self.configs = [Config(storage_dir, clusterMap, i, keys[i], clusterAddresses[i], True) for i in range(numIds)]
+        #self.configs = [Config(storage_dir, cluster_vals, server_id, True) for server_id in range(numIds)]
 
     def _run_server(self, config):
         setup(config)

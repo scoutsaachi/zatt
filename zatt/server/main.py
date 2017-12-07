@@ -18,8 +18,8 @@ def setup(config):
 
     loop = asyncio.get_event_loop()
     orchestrator = Orchestrator()
-    addrTuple = cfg.config.getMyClusterInfo()
-    print (addrTuple)
+    addrTuple = cfg.config.getMyClusterInfo() #(addr, port)
+    print ("Setting up", addrTuple)
     coro = loop.create_datagram_endpoint(lambda: PeerProtocol(orchestrator),
                                          local_addr=addrTuple)
     transport, _ = loop.run_until_complete(coro)
@@ -33,7 +33,9 @@ def setup(config):
 
 
 def run():
-    """Start a node."""
+    """Start a node.
+        e.g python3 main.py /Users/saachi/Desktop/cs244b/zatt/zatt_cluster/config.json 1 --debug True
+    """
     parser = argparse.ArgumentParser(description='Start node for Raft BFT')
     parser.add_argument('configFile', type=str, help='the configuration file')
     parser.add_argument('id', type=int, help='the node id to be started')

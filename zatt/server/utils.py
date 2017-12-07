@@ -118,3 +118,46 @@ def get_kth_smallest(l, k):
 def get_quorum_size(n):
     assert (n-1) % 3 == 0
     return math.ceil((float(n-1)*(2/3)) + 1)
+
+# -------- KEY UTILS ------------
+def createAndWriteKeys(directoryName, n):
+    private_dir = "%s/private_keys" % directoryName
+    public_dir = "%s/public_keys" % directoryName
+    if not os.path.exists(private_dir):
+        os.makedirs(private_dir)
+    if not os.path.exists(public_dir):
+        os.makedirs(public_dir)
+    for i in range(n):
+        key = RSA.generate(2048)
+        privateKey = key.exportKey('PEM')
+        publicKey = key.publickey().exportKey('PEM')
+        privateKeyFileName = "%s/%d.pem" % (private_dir, i)
+        publicKeyFileName = "%s/%d.pem" % (public_dir, i)
+        f = open(privateKeyFileName, 'wb')
+        f.write(privateKey)
+        f.close()
+
+        f = open(publicKeyFileName, 'wb')
+        f.write(publicKey)
+        f.close()
+
+def importPublicKeys(directoryName, n):
+    """ give the key directory and the expected number of public keys"""
+    public_dir = "%s/public_keys" % directoryName
+    keys = []
+    for i in range(n):
+        filename = "%s/%d.pem" % (public_dir, i)
+        assert os.path.exists(filename)
+        f = open(filename, 'r')
+        keys.append(RSA.importKey(f.read()))
+        f.close()
+    return keys
+
+def importPrivateKey(directoryName, id):
+    """ give the key directory and the id for the private key we are retreiving"""
+    filename = "%s/private_keys/%d.pem" % (directoryName, id)
+    assert os.path.exists(filename)
+    f = open(filename, 'r')
+    key = append(RSA.importKey(f.read()))
+    f.close()
+    return key

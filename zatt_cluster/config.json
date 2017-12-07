@@ -1,9 +1,11 @@
 {  
     "StorageDir":"zatt_cluster/storage",
+    "keyDir":"zatt_cluster/keys",
     "cluster":[  
        [  
           "127.0.0.1",
-          5254
+          5254,
+
        ],
        [  
           "127.0.0.1",
