@@ -23,11 +23,22 @@ class Log(collections.UserList):
             logger.debug('Using persisted data')
 
 
-    def pre_prepare_entries(self, entries, start):
+    # def pre_prepare_entries(self, entries, start):
+    #     """
+    #     Pre-prepare an entry to the log
+    #     @params start: prevLogIndex
+    #     @params entires:
+    #     """
+    #     if len(self.data) >= start:
+    #         self.replace(self.data[:start] + entries)
+    #     else:
+    #         self.data += entries
+    #         utils.msgpack_appendable_pack(entries, self.path)
+    
+    def append_entries(self, entries, start):
         """
-        Pre-prepare an entry to the log
-        @params start: prevLogIndex
-        @params entires:
+        Overwrite entries in log, from start to end inclusive
+        if only one entry, start = end
         """
         if len(self.data) >= start:
             self.replace(self.data[:start] + entries)
@@ -88,7 +99,7 @@ class LogManager:
     """Instantiate and manage the components of the "Log" subsystem.
     That is: the log, the compactor and the state machine."""
     def __init__(self, compact_count=0, compact_term=None, compact_data={},
-                 machine=DictStateMachine):
+                 machine=DictStateMachine, address=None):
         erase_log = compact_count or compact_term or compact_data
         self.log = Log(erase_log)
         self.compacted = Compactor(compact_count, compact_term, compact_data)
@@ -96,8 +107,9 @@ class LogManager:
                                      lastApplied=-1)
         self.commitIndex = len(self.log) - 1
         # TODO persist prepareIndex
-        self.prepareIndex = -1 # nothing has yet been prepared. prepareIndex is inclusive
+        self.prepareIndex = self.commitIndex # nothing has yet been prepared. prepareIndex is inclusive
         self.state_machine.apply(self, self.commitIndex)
+        self.address = address
 
     def __getitem__(self, index):
         """Get item or slice from the log, based on absolute log indexes.
@@ -126,17 +138,19 @@ class LogManager:
         else:
             return self[index]['term']
 
-    def pre_prepare_entries(self, entries, prevLogIndex):
-        self.log.pre_prepare_entries(entries, prevLogIndex + 1)
-        if entries:
-            print('Pre-Prepare. New log: %s', self.log.data)
+    # def pre_prepare_entries(self, entries, prevLogIndex):
+    #     self.log.pre_prepare_entries(entries, prevLogIndex + 1)
+    #     if entries:
+    #         print('Pre-Prepare. New log: %s', self.log.data)
+    
+    def append_entries(self, entries, start):
+        self.log.append_entries(entries, start)
+
 
     def commit(self, leaderCommit):
-        if leaderCommit <= self.commitIndex:
-            return
-
-        self.commitIndex = min(leaderCommit, self.index)  # no overshoots
-        print('Advancing commit to %s' % self.commitIndex)
+        assert self.commitIndex <= leaderCommit
+        self.commitIndex = leaderCommit  # no overshoots
+        print(self.address, 'Advancing commit to %s' % self.commitIndex)
         # above is the actual commit operation, just incrementing the counter!
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
@@ -144,10 +158,9 @@ class LogManager:
         # self.compaction_timer_touch()
     
     def prepare(self, leaderPrepare):
-        if leaderPrepare <= self.prepareIndex:
-            return
-        self.prepareIndex = min(leaderPrepare, self.index)  # no overshoots
-        print('Advancing prepare to %s' % self.prepareIndex)        
+        assert self.prepareIndex <= leaderPrepare
+        self.prepareIndex = leaderPrepare
+        print(self.address, 'Advancing prepare to %s' % self.prepareIndex)        
 
     def compact(self):
         del self.compaction_timer

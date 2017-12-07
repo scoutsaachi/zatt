@@ -31,7 +31,9 @@ class State:
                              'publicKeyMap': cfg.config.cluster.copy(),
                              'address': cfg.config.getMyClusterInfo(),
                              'privateKey': cfg.config.getMyPrivateKey()}
-            self.log = LogManager()
+            self.log = LogManager(address=self.volatile['address'])
+            print(self.volatile['address'], "initializing new log")
+            print(self.volatile['address'], "CommitIndex: %d, PrepareIndex:%s, LogIndex: %s" % (self.log.commitIndex, self.log.prepareIndex, self.log.index))
             self._update_cluster()
         self.stats = TallyCounter(['read', 'write', 'append'])
 
@@ -160,36 +162,37 @@ class Follower(State):
         In the end, the log is scanned for a new cluster config.
         """
         self.restart_election_timer()
-
+        assert 'compact_data' not in msg
+        # check all signatures and return if you think leader is faulty
+        assert self.log.commitIndex <= msg['leaderCommit']
+        status_code = 0
+        # check for prev log index match
         term_is_current = msg['term'] >= self.persist['currentTerm']
         prev_log_term_match = msg['prevLogTerm'] is None or\
             self.log.term(msg['prevLogIndex']) == msg['prevLogTerm']
-        # check to make sure we are not pre-preparing an index that is already prepared
-        does_not_overwite_prepare = self.log.prepareIndex < msg['prevLogIndex'] + 1
-        success = term_is_current and prev_log_term_match and does_not_overwite_prepare
-
-        if 'compact_data' in msg:
-            assert False
-            # self.log = LogManager(compact_count=msg['compact_count'],
-            #                       compact_term=msg['compact_term'],
-            #                       compact_data=msg['compact_data'])
-            # self.volatile['leaderId'] = msg['leaderId']
-            # logger.debug('Initialized Log with compact data from Leader')
-        elif success:
-            self.log.pre_prepare_entries(msg['entries'], msg['prevLogIndex']) # append the entries
-            self.log.prepare(msg['leaderPrepare']) # update the prepare point based on leader
-            self.log.commit(msg['leaderCommit']) # update the commit point based on leader
-            self.volatile['leaderId'] = msg['leaderId']
-            logger.debug('Log index is now %s', self.log.index)
-            self.stats.increment('append', len(msg['entries']))
-        else:
+        if not term_is_current or not prev_log_term_match:
+            # there was a mismatch in prev log index
+            status_code = 1
             logger.warning('Could not append entries. cause: %s', 'wrong\
                 term' if not term_is_current else 'prev log term mismatch')
+        else:
+            # either we don't need to overwrite a prepare or the leader
+            # has a valid prepare index greater than our own
+            should_copy_leader_log = (msg['leaderPrepare'] >= self.log.prepareIndex)
+            if not should_copy_leader_log:
+                status_code = 2 # you are trying to overwrite a prepare index without a greater leader prepare
+            else:
+                # we are successful so overwrite with leader's log
+                self.log.append_entries(msg['entries'], msg['prevLogIndex']+1)
+                self.log.prepare(msg['leaderPrepare'])
+                self.log.commit(msg['leaderCommit'])
+                logger.debug('Log index is now %s', self.log.index)
+                self.stats.increment('append', len(msg['entries']))
+            self.volatile['leaderId'] = msg['leaderId']
 
         self._update_cluster()
-        liePrepareIndex = self.log.prepareIndex if self.volatile['address'][1] != 9112 else 10
-        print("liePrepareIndex", self.volatile['address'][1], liePrepareIndex)
-        resp = {'type': 'response_update', 'success': success,
+        # status_code: {0: Good, 1: prev-log index mismatch, 2: tried to overwrite prepare without a greater leader prepare}
+        resp = {'type': 'response_update', "status_code": status_code,
                 'term': self.persist['currentTerm'],
                 'prePrepareIndex': self.log.index,
                 'prepareIndex': self.log.prepareIndex
@@ -245,20 +248,21 @@ class Leader(State):
         super().__init__(old_state, orchestrator)
         logger.info('Leader of term: %s', self.persist['currentTerm'])
         self.volatile['leaderId'] = self.volatile['address']
-        self.prePrepareIndexMap = {p: 0 for p in self.volatile['cluster']} # latest pre-Prepare point per follower
+        self.prePrepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest pre-Prepare point per follower
         self.nextIndexMap = {p: self.log.commitIndex + 1 for p in self.prePrepareIndexMap}
-        self.prepareIndexMap = {p: 0 for p in self.volatile['cluster']} # latest prepare position per follower
+        self.prepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest prepare position per follower
         self.waiting_clients = {} # log index -> [protocol for a client]
         self.send_update()
 
         if 'cluster' not in self.log.state_machine:
-            self.log.pre_prepare_entries([
+            self.log.append_entries([
                 {'term': self.persist['currentTerm'],
                  'data':{'key': 'cluster',
                          'value': tuple(self.volatile['cluster']),
                          'action': 'change'}}],
-                self.log.index)
-            self.log.commit(self.log.index)
+                self.log.index+1)
+            # self.log.prepare(self.log.index)
+            # self.log.commit(self.log.index)
 
     def teardown(self):
         """Stop timers before changing state."""
@@ -307,7 +311,8 @@ class Leader(State):
         """Handle peer response to update RPC.
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
-        if msg['success']:
+        status_code = msg['status_code']
+        if status_code == 0:
             self.prePrepareIndexMap[peer] = msg['prePrepareIndex']
             self.nextIndexMap[peer] = msg['prePrepareIndex'] + 1
             self.prepareIndexMap[peer] = msg['prepareIndex']
@@ -320,15 +325,17 @@ class Leader(State):
             quorum_size = get_quorum_size(len(self.prepareIndexMap))
             prepareIndex = get_kth_smallest(self.prePrepareIndexMap.values(), quorum_size)
             #prepareIndex = statistics.median_low(self.prePrepareIndexMap.values())
+            print(self.volatile['address'], "About to prepare in method on_peer_response updating %d to %d" % (self.log.prepareIndex, prepareIndex))
             self.log.prepare(prepareIndex)
 
             commitIndex = get_kth_smallest(self.prepareIndexMap.values(), quorum_size)
             #commitIndex = statistics.median_low(self.prepareIndexMap.values())
             self.log.commit(commitIndex)
             self.send_client_append_response()
-        else:
+        elif status_code == 1:
             # to aggressive so move index for this peer back one
             self.nextIndexMap[peer] = max(0, self.nextIndexMap[peer] - 1)
+        # status_code = 2 do nothing
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
@@ -336,13 +343,13 @@ class Leader(State):
         print("entry:", entry)
         if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})
-        self.log.pre_prepare_entries([entry], self.log.index) # append to our own log
+        self.log.append_entries([entry], self.log.index + 1) # append to our own log
         if self.log.index in self.waiting_clients:
             self.waiting_clients[self.log.index].append(protocol) # schedule client to be notified
         else:
             self.waiting_clients[self.log.index] = [protocol]
         self.on_peer_response_update(
-            self.volatile['address'], {'success': True,
+            self.volatile['address'], {'status_code': 0,
                                        'prePrepareIndex': self.log.index,
                                        'prepareIndex': self.log.prepareIndex})
 
@@ -388,10 +395,10 @@ class Leader(State):
         else:
             success = False
         if success:
-            self.log.pre_prepare_entries([
+            self.log.append_entries([
                 {'term': self.persist['currentTerm'],
                  'data':{'key': 'cluster', 'value': tuple(cluster),
                          'action': 'change'}}],
-                self.log.index)
+                self.log.index+1)
             self.volatile['cluster'] = cluster
         protocol.send({'type': 'result', 'success': success})
