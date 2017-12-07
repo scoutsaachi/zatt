@@ -118,3 +118,15 @@ def get_kth_smallest(l, k):
 def get_quorum_size(n):
     assert (n-1) % 3 == 0
     return math.ceil((float(n-1)*(2/3)) + 1)
+
+def validateSignature(message, signature, pk):
+    h = SHA256.new()
+    h.update(message)
+    verifier = PKCS1_PSS.new(pk)
+    return verifier.verify(h, signature)
+
+def validate_entries(entries):
+    for (entry in entries) :
+        if (!validateSignature(entry['data']))
+            return False
+    return True

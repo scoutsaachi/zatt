@@ -5,7 +5,7 @@ from random import randrange
 from os.path import join
 from zatt.server.utils import PersistentDict, TallyCounter
 from zatt.server.log import LogManager
-from zatt.server.utils import get_kth_smallest, get_quorum_size
+from zatt.server.utils import get_kth_smallest, get_quorum_size, validate_entries, validateSignature
 import zatt.server.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -163,8 +163,13 @@ class Follower(State):
         prev_log_term_match = msg['prevLogTerm'] is None or\
             self.log.term(msg['prevLogIndex']) == msg['prevLogTerm']
         # check to make sure we are not pre-preparing an index that is already prepared
+        # TODO: We might need to overwrite a prepared index here, automatically add entries
+        # for everything above commit index? what to respond with? success? 
+        valid_prepare_index = validateIndex(msg['leaderPrepare'], msg['prepareIndexProof'], 'prePrepareIndex')
+        valid_commit_index = validateIndex(msg['leaderCommit'], msg['commitIndexProof'], 'prepareIndex')
         does_not_overwite_prepare = self.log.prepareIndex < msg['prevLogIndex'] + 1
         success = term_is_current and prev_log_term_match and does_not_overwite_prepare
+            and validate_entries(entries, self.client_pk)
 
         if 'compact_data' in msg:
             assert False
@@ -181,8 +186,9 @@ class Follower(State):
             logger.debug('Log index is now %s', self.log.index)
             self.stats.increment('append', len(msg['entries']))
         else:
-            logger.warning('Could not append entries. cause: %s', 'wrong\
-                term' if not term_is_current else 'prev log term mismatch')
+            logger.warning('Could not append entries. term is current: ', term_is_current,
+            'prev_log_term_match', prev_log_term_match, 'does_not_overwite_prepare', does_not_overwite_prepare,
+            'validateEntries', validate_entries(entries, self.client_pk))
 
         self._update_cluster()
 
@@ -192,6 +198,19 @@ class Follower(State):
                 'prepareIndex': self.log.prepareIndex
                 }
         self.orchestrator.send_peer(peer, resp)
+
+    def validateIndex(index, peerMap, attribute):
+        peerIndices = []
+        for (peer in peerMap):
+            msg 
+            signature = msg['signature']
+            msg['signature'] = 0
+            if (!validateSignature(msg, signature, self.peerPublicKeys[peer])) return False
+            msg['signature'] = signature
+            peerIndices.append(msg[attribute])
+        quorum_size = get_quorum_size(len(peerIndices))
+        finalIndex = get_kth_smallest(self.prePrepareIndexMap.values(), quorum_size)
+        return index == finalIndex
 
 
 class Candidate(Follower):
@@ -283,7 +302,9 @@ class Leader(State):
                    'leaderId': self.volatile['address'],
                    'prevLogIndex': self.nextIndexMap[peer] - 1,
                    'entries': self.log[self.nextIndexMap[peer]:
-                                       self.nextIndexMap[peer] + 100]}
+                                       self.nextIndexMap[peer] + 100],
+                   'prepareIndexProof': self.prePrepareIndexProof,
+                   'commitIndexProof': self.prepareIndexProof}
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
 
             if self.nextIndexMap[peer] <= self.log.compacted.index:
@@ -304,10 +325,17 @@ class Leader(State):
         """Handle peer response to update RPC.
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
+        signature = msg['signature']
+        msg['signature'] = 0
+        if (!validateSignature(msg, signature, self.peerPublicKeys[peer])) return
+        msg['signature'] = signature
+
         if msg['success']:
             self.prePrepareIndexMap[peer] = msg['prePrepareIndex']
+            self.prePrepareIndexProof[peer] = msg
             self.nextIndexMap[peer] = msg['prePrepareIndex'] + 1
             self.prepareIndexMap[peer] = msg['prepareIndex']
+            self.prepareIndexProof[peer] = msg
 
             self.prePrepareIndexMap[self.volatile['address']] = self.log.index
             self.nextIndexMap[self.volatile['address']] = self.log.index + 1
@@ -329,8 +357,13 @@ class Leader(State):
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
-        entry = {'term': self.persist['currentTerm'], 'data': msg['data']}
+        entry = {
+            'term': self.persist['currentTerm'], 
+            'data': msg['data'], 
+            'clientSignature' : msg['signature']
+        }
         print("entry:", entry)
+        if (!validate_entries([entry], self.client_pk)) return
         if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})
         self.log.pre_prepare_entries([entry], self.log.index) # append to our own log

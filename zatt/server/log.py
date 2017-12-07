@@ -4,6 +4,8 @@ import collections
 import asyncio
 import logging
 import zatt.server.config as cfg
+from Crypto.Signature import PKCS1_PSS
+from Crypto.Hash import SHA256
 from zatt.server import utils
 
 logger = logging.getLogger(__name__)
@@ -23,12 +25,14 @@ class Log(collections.UserList):
             logger.debug('Using persisted data')
 
 
-    def pre_prepare_entries(self, entries, start):
+    def pre_prepare_entries(self, entries, start, client_pk):
         """
         Pre-prepare an entry to the log
         @params start: prevLogIndex
         @params entires:
         """
+        if (!utils.validateEntries(entries)) return
+
         if len(self.data) >= start:
             self.replace(self.data[:start] + entries)
         else:
