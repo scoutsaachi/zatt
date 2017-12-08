@@ -140,6 +140,19 @@ def createAndWriteKeys(directoryName, n):
         f = open(publicKeyFileName, 'wb')
         f.write(publicKey)
         f.close()
+    
+    # generate client keys
+    key = RSA.generate(2048)
+    privateKey = key.exportKey('PEM')
+    publicKey = key.publickey().exportKey('PEM')
+    privateKeyFileName = "%s/%d.pem" % (private_dir, "client_key")
+    publicKeyFileName = "%s/%d.pem" % (public_dir, "client_key")
+    f = open(privateKeyFileName, 'wb')
+    f.write(privateKey)
+    f.close()
+    f = open(publicKeyFileName, 'wb')
+    f.write(publicKey)
+    f.close()
 
 def importPublicKeys(directoryName, n):
     """ give the key directory and the expected number of public keys"""
@@ -158,6 +171,46 @@ def importPrivateKey(directoryName, id):
     filename = "%s/private_keys/%d.pem" % (directoryName, id)
     assert os.path.exists(filename)
     f = open(filename, 'r')
-    key = append(RSA.importKey(f.read()))
+    key = RSA.importKey(f.read())
     f.close()
     return key
+
+def importClientPublicKey(directoryName):
+    filename = "%s/public_keys/client_key.pem" % (directoryName)
+    assert os.path.exists(filename)
+    f = open(filename, 'r')
+    key = RSA.importKey(f.read())
+    f.close()
+    return key
+
+def importClientPrivateKey(directoryName):
+    filename = "%s/private_keys/client_key.pem" % (directoryName)
+    assert os.path.exists(filename)
+    f = open(filename, 'r')
+    key = RSA.importKey(f.read())
+    f.close()
+    return key
+
+def validateSignature(message, signature, pk):
+    h = SHA256.new()
+    h.update(message)
+    verifier = PKCS1_PSS.new(pk)
+    return verifier.verify(h, signature)
+
+def validate_entries(entries):
+    for (entry in entries) :
+        if (!validateSignature(entry['data']))
+            return False
+    return True
+
+def sign(msg, sk):
+    """ return a signed version of the message digest with the given secret key """
+    h = SHA256.new()
+    h.update(msg)
+    signer = PKCS1_PSS.new(sk)
+    return signer.sign(h)
+
+def getLogHash(log, index):
+    digest = SHA256.new()
+    digest.update(log[:index + 1])
+    return digest

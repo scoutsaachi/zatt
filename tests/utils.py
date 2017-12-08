@@ -12,10 +12,11 @@ from Crypto.PublicKey import RSA
 
 
 class Pool:
-    def __init__(self, num_servers):
+    
+    def __init__(self, num_servers, clientKey):
         # if type(server_ids) is int:
         #     server_ids = range(server_ids)
-        self._generate_configs(num_servers)
+        self._generate_configs(num_servers, clientKey)
         self.servers = {}
         self.server_ids = [i for i in range(num_servers)]
         for c in self.configs:
@@ -55,13 +56,13 @@ class Pool:
     def ids(self):
         return self.server_ids.copy()
 
-    def _generate_configs(self, numIds):
+    def _generate_configs(self, numIds, clientKey):
         storage_dir = "%s/persistStorage" % os.path.abspath(os.path.dirname(__file__))
         keys = [RSA.generate(2048) for i in range(numIds)]
 
         clusterAddresses = [("127.0.0.1", 9110 + i) for i in range(numIds)] # [(ip_addr, port)]
         clusterMap = {k:keys[i].publickey() for i,k in enumerate(clusterAddresses)} #[(ip_addr, port) -> public key]
-        self.configs = [Config(storage_dir, clusterMap, i, keys[i], clusterAddresses[i], True) for i in range(numIds)]
+        self.configs = [Config(storage_dir, clusterMap, i, keys[i], clusterAddresses[i], clientKey, True) for i in range(numIds)]
         #self.configs = [Config(storage_dir, cluster_vals, server_id, True) for server_id in range(numIds)]
 
     def _run_server(self, config):

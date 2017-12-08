@@ -4,6 +4,8 @@ import collections
 import asyncio
 import logging
 import zatt.server.config as cfg
+from Crypto.Signature import PKCS1_PSS
+from Crypto.Hash import SHA256
 from zatt.server import utils
 
 logger = logging.getLogger(__name__)
@@ -34,12 +36,17 @@ class Log(collections.UserList):
     #     else:
     #         self.data += entries
     #         utils.msgpack_appendable_pack(entries, self.path)
+    def getHash(self, index):
+        return utils.getLogHash(self.data, index)
+
     
     def append_entries(self, entries, start):
         """
         Overwrite entries in log, from start to end inclusive
         if only one entry, start = end
         """
+        # if (!utils.validateEntries(entries)) return
+
         if len(self.data) >= start:
             self.replace(self.data[:start] + entries)
         else:
@@ -137,6 +144,9 @@ class LogManager:
             return self.compacted.term
         else:
             return self[index]['term']
+    def getHash(self, index):
+        self.log.getHash(index)
+
 
     # def pre_prepare_entries(self, entries, prevLogIndex):
     #     self.log.pre_prepare_entries(entries, prevLogIndex + 1)

@@ -5,13 +5,14 @@ from zatt.client.refresh_policies import RefreshPolicyAlways
 
 class DistributedDict(collections.UserDict, AbstractClient):
     """Client for zatt instances with dictionary based state machines."""
-    def __init__(self, addr, port, append_retry_attempts=3,
+    def __init__(self, addr, port, privateKey, append_retry_attempts=3,
                  refresh_policy=RefreshPolicyAlways()):
         super().__init__()
         self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
         self.refresh_policy = refresh_policy
         self.refresh(force=True)
+        self.privateKey = privateKey
 
     def __getitem__(self, key):
         self.refresh()

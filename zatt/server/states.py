@@ -5,7 +5,7 @@ from random import randrange
 from os.path import join
 from zatt.server.utils import PersistentDict, TallyCounter
 from zatt.server.log import LogManager
-from zatt.server.utils import get_kth_smallest, get_quorum_size
+from zatt.server.utils import get_kth_smallest, get_quorum_size, validate_entries, validateSignature
 import zatt.server.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -163,19 +163,33 @@ class Follower(State):
         """
         self.restart_election_timer()
         assert 'compact_data' not in msg
-        # check all signatures and return if you think leader is faulty
+        signature = msg['signature']
+        msg['signature'] = 0
+
+        entries = msg['entries']
+        # validate that the leader actually sent this message
+        # TODO: validate this leader is a valid leader
+        if (not validateSignature(msg, signature, self.publicKeyMap[peer])): return 
+        # validate that the entries proposed are all signed by the client
+        if not validate_entries(entries, self.client_pk): return
+
         assert self.log.commitIndex <= msg['leaderCommit']
         status_code = 0
         # check for prev log index match
         term_is_current = msg['term'] >= self.persist['currentTerm']
         prev_log_term_match = msg['prevLogTerm'] is None or\
             self.log.term(msg['prevLogIndex']) == msg['prevLogTerm']
+
         if not term_is_current or not prev_log_term_match:
             # there was a mismatch in prev log index
             status_code = 1
             logger.warning('Could not append entries. cause: %s', 'wrong\
                 term' if not term_is_current else 'prev log term mismatch')
         else:
+            hypothetical_new_log = self.log.log.data[:(msg['prevLogIndex'] + 1)] + entries
+            # validate prepare and commit
+            if not validateIndex(hypothetical_new_log, msg['leaderPrepare'], msg['leaderCommit'],msg['proof']): return
+
             # either we don't need to overwrite a prepare or the leader
             # has a valid prepare index greater than our own
             should_copy_leader_log = (msg['leaderPrepare'] >= self.log.prepareIndex)
@@ -190,14 +204,47 @@ class Follower(State):
                 self.stats.increment('append', len(msg['entries']))
             self.volatile['leaderId'] = msg['leaderId']
 
+
         self._update_cluster()
+
         # status_code: {0: Good, 1: prev-log index mismatch, 2: tried to overwrite prepare without a greater leader prepare}
         resp = {'type': 'response_update', "status_code": status_code,
                 'term': self.persist['currentTerm'],
-                'prePrepareIndex': self.log.index,
-                'prepareIndex': self.log.prepareIndex
-                }
+                'prePrepareIndex': (self.log.index, self.log.getHash(self.log.index)),
+                'prepareIndex' : (self.log.prepareIndex, self.log.getHash(self.log.prepareIndex)),
+                'signature' : 0
+        }
+
+        signature = utils.sign(resp, self.volatile['private_key'])
+        resp['signature'] = signature
         self.orchestrator.send_peer(peer, resp)
+
+    def validateIndex(log_data, leaderPrepare, leaderCommit, proof):
+        prePrepareIndices = []
+        prepareIndices = []
+        if (len(self.volatile['cluster']) != len(proof)):
+            return False
+        for (peer, msg in proof.items()):
+            if (len(msg) == 0): continue # this peer has not put a successful message for this leader
+            peerSignature = msg['signature']
+            msg['signature'] = 0
+            if (!validateSignature(msg, peerSignature, self.peerPublicKeys[peer])) return False
+            msg['signature'] = peerSignature
+
+            peerPrePrepare, peerPrePrepareHash = msg['prePrepareIndex']
+            peerPrepare, peerPrepareHash = msg['prepareIndex']
+
+            if (peerPrePrepare >= len(log_data) || peerPrepare >= len(log_data)): return False
+            if utils.getLogHash(log_data, peerPrePrepare) != peerPrePrepareHash: return False
+            if utils.getLogHash(log_data, peerPrepare) != peerPrepareHash: return False
+
+            prePrepareIndices.append(peerPrePrepare)
+            prepareIndices.append(peerPrepare)
+
+        quorum_size = get_quorum_size(len(self.volatile['cluster']))
+        prepareIndex = get_kth_smallest(prePrepareIndices, quorum_size)
+        commitIndex = get_kth_smallest(prepareIndices, quorum_size)
+        return  prepareIndex == leaderPrepare and commitIndex == leaderCommit
 
 
 class Candidate(Follower):
@@ -251,6 +298,7 @@ class Leader(State):
         self.prePrepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest pre-Prepare point per follower
         self.nextIndexMap = {p: self.log.commitIndex + 1 for p in self.prePrepareIndexMap}
         self.prepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest prepare position per follower
+        self.latestMessageMap = {p: {} for p in self.volatile['cluster']} # latest update response per follower
         self.waiting_clients = {} # log index -> [protocol for a client]
         self.send_update()
 
@@ -290,8 +338,12 @@ class Leader(State):
                    'leaderId': self.volatile['address'],
                    'prevLogIndex': self.nextIndexMap[peer] - 1,
                    'entries': self.log[self.nextIndexMap[peer]:
-                                       self.nextIndexMap[peer] + 100]}
+                                       self.nextIndexMap[peer] + 100],
+                   'proof': self.latestMessageMap,
+                   'signature' : 0}
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
+
+            msg['signature'] = utils.sign(msg, self.volatile['privateKey'])
 
             if self.nextIndexMap[peer] <= self.log.compacted.index:
                 assert False # should never happen since we're not compacting
@@ -311,11 +363,17 @@ class Leader(State):
         """Handle peer response to update RPC.
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
+        signature = msg['signature']
+        msg['signature'] = 0
+        if (not validateSignature(msg, signature, self.peerPublicKeys[peer])) return
+        msg['signature'] = signature
+
         status_code = msg['status_code']
         if status_code == 0:
-            self.prePrepareIndexMap[peer] = msg['prePrepareIndex']
+            self.latestMessageMap[peer] = msg
+            self.prePrepareIndexMap[peer] = msg['prePrepareIndex'][0] # only store the indices
             self.nextIndexMap[peer] = msg['prePrepareIndex'] + 1
-            self.prepareIndexMap[peer] = msg['prepareIndex']
+            self.prepareIndexMap[peer] = msg['prepareIndex'][0] # only store the indices
 
             self.prePrepareIndexMap[self.volatile['address']] = self.log.index
             self.nextIndexMap[self.volatile['address']] = self.log.index + 1
@@ -331,7 +389,7 @@ class Leader(State):
             commitIndex = get_kth_smallest(self.prepareIndexMap.values(), quorum_size)
             #commitIndex = statistics.median_low(self.prepareIndexMap.values())
             self.log.commit(commitIndex)
-            self.send_client_append_response()
+            self.send_client_append_response() # TODO make sure client has proof of commit
         elif status_code == 1:
             # to aggressive so move index for this peer back one
             self.nextIndexMap[peer] = max(0, self.nextIndexMap[peer] - 1)
@@ -339,8 +397,13 @@ class Leader(State):
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
-        entry = {'term': self.persist['currentTerm'], 'data': msg['data']}
+        entry = {
+            'term': self.persist['currentTerm'], 
+            'data': msg['data'], 
+            'clientSignature' : msg['signature']
+        }
         print("entry:", entry)
+        if (not validate_entries([entry], self.client_pk)) return
         if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})
         self.log.append_entries([entry], self.log.index + 1) # append to our own log
