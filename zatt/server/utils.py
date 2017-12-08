@@ -6,6 +6,11 @@ import logging
 import collections
 import msgpack
 import math
+from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA256
+from Crypto.Signature import PKCS1_PSS
+import Crypto
+from pprint import pformat
 
 MAX_MSGPACK_ARRAY_HEADER_LEN = 5
 logger = logging.getLogger(__name__)
@@ -191,26 +196,47 @@ def importClientPrivateKey(directoryName):
     f.close()
     return key
 
-def validateSignature(message, signature, pk):
-    h = SHA256.new()
-    h.update(message)
-    verifier = PKCS1_PSS.new(pk)
-    return verifier.verify(h, signature)
 
-def validate_entries(entries):
-    for (entry in entries) :
-        if (!validateSignature(entry['data']))
-            return False
-    return True
+def validateSignature(message, signature, pk):
+    """ pk should be a verifier """
+    h = SHA256.new()
+    h.update(pformat(message).encode('utf-8'))
+    # verifier = PKCS1_PSS.new(pk)
+    # return verifier.verify(h, signature)
+    return pk.verify(h, signature)
 
 def sign(msg, sk):
-    """ return a signed version of the message digest with the given secret key """
+    """ return a signed version of the message digest with the given secret key
+        sk should be a signer object """
     h = SHA256.new()
-    h.update(msg)
-    signer = PKCS1_PSS.new(sk)
-    return signer.sign(h)
+    h.update(pformat(msg).encode('utf-8'))
+    # signer = PKCS1_PSS.new(sk)
+    # return signer.sign(h)
+    return sk.sign(h)
 
 def getLogHash(log, index):
     digest = SHA256.new()
-    digest.update(log[:index + 1])
+    digest.update(pformat(log[:index + 1]).encode('utf-8'))
     return digest
+
+def validateDict(message, pk):
+    """ assuming that signature is in the message, validate if the signature is
+        correct """
+    assert 'signature' in message
+    signature = message['signature']
+    message['signature'] = 0
+    isValid = validateSignature(message, signature, pk)
+    message['signature'] = signature
+    return isValid
+
+def signDict(message, sk):
+    message['signature'] = 0
+    s = sign(message, sk)
+    message['signature'] = s 
+    return message
+
+def validate_entries(entries, client_pk):
+    """ validate that all entries in entries are signed by the client """
+    for entry in entries:
+        if not validateDict(entry['data'], client_pk): return False
+    return True

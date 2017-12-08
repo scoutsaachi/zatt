@@ -1,6 +1,9 @@
 import json
 import utils
+from Crypto.Signature import PKCS1_PSS
+
 config = None # global config variable! set in main.py
+
 
 class Config:
     """Collect and merge CLI and file based config.
@@ -17,12 +20,13 @@ class Config:
         @param the client's public key
         """
         self.storageDir = storageDir
-        self.cluster = cluster # an array of ("addr", portNum, publicKey)
+        clusterVerifiers = {k : PKCS1_PSS.new(pk) for k, pk in cluster.items()}
+        self.cluster = clusterVerifiers # an array of ("addr", portNum, publicKey)
         self.nodeID = nodeId
         self.debug = debug
-        self.private_key = private_key
+        self.private_key = PKCS1_PSS.new(private_key)
         self.address = address
-        self.client_key = client_key
+        self.client_key = PKCS1_PSS.new(client_key)
     
     """ Return a new config that is based off of the json given in parameter"""
     def CreateConfig(cfg_filename, nodeId, debug=True):

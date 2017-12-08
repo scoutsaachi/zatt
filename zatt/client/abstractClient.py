@@ -1,15 +1,22 @@
 import socket
 import random
 import msgpack
+from zatt.server.utils import signDict
+from Crypto.Signature import PKCS1_PSS
+
 
 
 class AbstractClient:
     """Abstract client. Contains primitives for implementing functioning
     clients."""
 
+    def __init__(self, privateKey):
+        self.privateKey = PKCS1_PSS.new(privateKey) # a signer with private key
+
     def _request(self, message):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect(self.server_address)
+        message = signDict(message, self.privateKey)
         sock.send(msgpack.packb(message, use_bin_type=True))
 
         buff = bytes()

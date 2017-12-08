@@ -5,9 +5,9 @@ from random import randrange
 from os.path import join
 from zatt.server.utils import PersistentDict, TallyCounter
 from zatt.server.log import LogManager
-from zatt.server.utils import get_kth_smallest, get_quorum_size, validate_entries, validateSignature
+from zatt.server.utils import get_kth_smallest, get_quorum_size, validate_entries, signDict, validateDict
 import zatt.server.config as cfg
-
+import Crypto
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +18,7 @@ class State:
         deployed. Subsequent state changes use the old_state parameter to
         preserve the environment.
         """
+        Crypto.Random.atfork()
         if old_state:
             self.orchestrator = old_state.orchestrator
             self.persist = old_state.persist
@@ -28,9 +29,10 @@ class State:
             self.persist = PersistentDict(join(cfg.config.getMyStorage(), 'state'),
                                           {'votedFor': None, 'currentTerm': 0})
             self.volatile = {'leaderId': None, 'cluster': cfg.config.cluster.keys(),
-                             'publicKeyMap': cfg.config.cluster.copy(),
+                             'publicKeyMap': cfg.config.cluster.copy(), # map from addresses to the verifiers
                              'address': cfg.config.getMyClusterInfo(),
-                             'privateKey': cfg.config.getMyPrivateKey()}
+                             'privateKey': cfg.config.getMyPrivateKey(), # an actual signer
+                             'clientKey': cfg.config.client_key}
             self.log = LogManager(address=self.volatile['address'])
             print(self.volatile['address'], "initializing new log")
             print(self.volatile['address'], "CommitIndex: %d, PrepareIndex:%s, LogIndex: %s" % (self.log.commitIndex, self.log.prepareIndex, self.log.index))
@@ -163,15 +165,18 @@ class Follower(State):
         """
         self.restart_election_timer()
         assert 'compact_data' not in msg
-        signature = msg['signature']
-        msg['signature'] = 0
+
+        # validate that the leader actually sent this message
+        # TODO validate that this leader is a valid leader
+        if (not validateDict(msg, self.publicKeyMap[peer])):
+            assert False # TODO remove
+            return
 
         entries = msg['entries']
-        # validate that the leader actually sent this message
-        # TODO: validate this leader is a valid leader
-        if (not validateSignature(msg, signature, self.publicKeyMap[peer])): return 
         # validate that the entries proposed are all signed by the client
-        if not validate_entries(entries, self.client_pk): return
+        if not validate_entries(entries, self.volatile['clientKey']):
+            assert False # TODO remove
+            return
 
         assert self.log.commitIndex <= msg['leaderCommit']
         status_code = 0
@@ -204,37 +209,33 @@ class Follower(State):
                 self.stats.increment('append', len(msg['entries']))
             self.volatile['leaderId'] = msg['leaderId']
 
-
         self._update_cluster()
 
         # status_code: {0: Good, 1: prev-log index mismatch, 2: tried to overwrite prepare without a greater leader prepare}
         resp = {'type': 'response_update', "status_code": status_code,
                 'term': self.persist['currentTerm'],
                 'prePrepareIndex': (self.log.index, self.log.getHash(self.log.index)),
-                'prepareIndex' : (self.log.prepareIndex, self.log.getHash(self.log.prepareIndex)),
-                'signature' : 0
+                'prepareIndex' : (self.log.prepareIndex, self.log.getHash(self.log.prepareIndex))
         }
-
-        signature = utils.sign(resp, self.volatile['private_key'])
-        resp['signature'] = signature
-        self.orchestrator.send_peer(peer, resp)
+        signedResp = utils.signDict(resp, self.volatile['private_key'])
+        self.orchestrator.send_peer(peer, signedResp)
 
     def validateIndex(log_data, leaderPrepare, leaderCommit, proof):
+        """ validate that the leader prepare and commit data are valid"""
         prePrepareIndices = []
         prepareIndices = []
-        if (len(self.volatile['cluster']) != len(proof)):
+        if len(self.volatile['cluster']) != len(proof):
+            assert False # TODO remove
             return False
-        for (peer, msg in proof.items()):
+
+        for peer, msg in proof.items():
             if (len(msg) == 0): continue # this peer has not put a successful message for this leader
-            peerSignature = msg['signature']
-            msg['signature'] = 0
-            if (!validateSignature(msg, peerSignature, self.peerPublicKeys[peer])) return False
-            msg['signature'] = peerSignature
+            if (not validateDict(msg, self.peerPublicKeys[peer])): return False
 
             peerPrePrepare, peerPrePrepareHash = msg['prePrepareIndex']
             peerPrepare, peerPrepareHash = msg['prepareIndex']
 
-            if (peerPrePrepare >= len(log_data) || peerPrepare >= len(log_data)): return False
+            if peerPrePrepare >= len(log_data) or peerPrepare >= len(log_data): return False
             if utils.getLogHash(log_data, peerPrePrepare) != peerPrePrepareHash: return False
             if utils.getLogHash(log_data, peerPrepare) != peerPrepareHash: return False
 
@@ -329,8 +330,7 @@ class Leader(State):
         - log entries: if available.
         Finally schedules itself for later execution."""
         for peer in self.volatile['cluster']:
-            if peer == self.volatile['address']:
-                continue
+            if peer == self.volatile['address']: continue
             msg = {'type': 'update',
                    'term': self.persist['currentTerm'],
                    'leaderCommit': self.log.commitIndex,
@@ -339,18 +339,12 @@ class Leader(State):
                    'prevLogIndex': self.nextIndexMap[peer] - 1,
                    'entries': self.log[self.nextIndexMap[peer]:
                                        self.nextIndexMap[peer] + 100],
-                   'proof': self.latestMessageMap,
-                   'signature' : 0}
+                   'proof': self.latestMessageMap}
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
-
-            msg['signature'] = utils.sign(msg, self.volatile['privateKey'])
+            msg = signDict(msg, self.volatile['privateKey'])
 
             if self.nextIndexMap[peer] <= self.log.compacted.index:
                 assert False # should never happen since we're not compacting
-                # msg.update({'compact_data': self.log.compacted.data,
-                #             'compact_term': self.log.compacted.term,
-                #             'compact_count': self.log.compacted.count})
-
             logger.debug('Sending %s entries to %s. Start index %s',
                          len(msg['entries']), peer, self.nextIndexMap[peer])
             self.orchestrator.send_peer(peer, msg)
@@ -363,11 +357,7 @@ class Leader(State):
         """Handle peer response to update RPC.
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
-        signature = msg['signature']
-        msg['signature'] = 0
-        if (not validateSignature(msg, signature, self.peerPublicKeys[peer])) return
-        msg['signature'] = signature
-
+        if not validateDict(msg, self.peerPublicKeys[peer]): return False
         status_code = msg['status_code']
         if status_code == 0:
             self.latestMessageMap[peer] = msg
@@ -382,12 +372,10 @@ class Leader(State):
             # global commit point is
             quorum_size = get_quorum_size(len(self.prepareIndexMap))
             prepareIndex = get_kth_smallest(self.prePrepareIndexMap.values(), quorum_size)
-            #prepareIndex = statistics.median_low(self.prePrepareIndexMap.values())
             print(self.volatile['address'], "About to prepare in method on_peer_response updating %d to %d" % (self.log.prepareIndex, prepareIndex))
             self.log.prepare(prepareIndex)
 
             commitIndex = get_kth_smallest(self.prepareIndexMap.values(), quorum_size)
-            #commitIndex = statistics.median_low(self.prepareIndexMap.values())
             self.log.commit(commitIndex)
             self.send_client_append_response() # TODO make sure client has proof of commit
         elif status_code == 1:
@@ -399,11 +387,12 @@ class Leader(State):
         """Append new entries to Leader log."""
         entry = {
             'term': self.persist['currentTerm'], 
-            'data': msg['data'], 
-            'clientSignature' : msg['signature']
+            'data': msg['data'] # data includes client signature
         }
         print("entry:", entry)
-        if (not validate_entries([entry], self.client_pk)) return
+        if not validate_entries([entry], self.volatile['clientKey']):
+            assert False # TODO remove
+            return
         if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})
         self.log.append_entries([entry], self.log.index + 1) # append to our own log
@@ -411,10 +400,9 @@ class Leader(State):
             self.waiting_clients[self.log.index].append(protocol) # schedule client to be notified
         else:
             self.waiting_clients[self.log.index] = [protocol]
-        self.on_peer_response_update(
-            self.volatile['address'], {'status_code': 0,
-                                       'prePrepareIndex': self.log.index,
-                                       'prepareIndex': self.log.prepareIndex})
+        msg = {'status_code': 0, 'prePrepareIndex': self.log.index, 'prepareIndex': self.log.prepareIndex}
+        signedMsg = signDict(msg, self.volatile['privateKey'])
+        self.on_peer_response_update(self.volatile['address'], signedMsg)
 
     def send_client_append_response(self):
         """Respond to client upon commitment of log entries."""

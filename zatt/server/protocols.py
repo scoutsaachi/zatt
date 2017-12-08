@@ -56,7 +56,8 @@ class PeerProtocol(asyncio.Protocol):
                 msgpack.packb(self.first_message, use_bin_type=True))
 
     def datagram_received(self, data, sender):
-        message = msgpack.unpackb(data, encoding='utf-8')
+        print("DATAGRAM RECEIVED", data)
+        message = msgpack.unpackb(data, encoding='utf-8', use_list=False)
         self.orchestrator.data_received_peer(sender, message)
 
     def error_received(self, ex):
