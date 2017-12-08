@@ -168,7 +168,7 @@ class Follower(State):
 
         # validate that the leader actually sent this message
         # TODO validate that this leader is a valid leader
-        if (not validateDict(msg, self.publicKeyMap[peer])):
+        if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
             assert False # TODO remove
             return
 
