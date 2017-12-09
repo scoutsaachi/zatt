@@ -24,18 +24,11 @@ class Log(collections.UserList):
             self.data = utils.msgpack_appendable_unpack(self.path)
             logger.debug('Using persisted data')
 
+    def findEntry(self, data):
+        for i, entry in enumerate(self.data):
+            if entry['data'] == self.data: return i
+        return -1
 
-    # def pre_prepare_entries(self, entries, start):
-    #     """
-    #     Pre-prepare an entry to the log
-    #     @params start: prevLogIndex
-    #     @params entires:
-    #     """
-    #     if len(self.data) >= start:
-    #         self.replace(self.data[:start] + entries)
-    #     else:
-    #         self.data += entries
-    #         utils.msgpack_appendable_pack(entries, self.path)
     def getHash(self, index):
         return utils.getLogHash(self.data, index)
 

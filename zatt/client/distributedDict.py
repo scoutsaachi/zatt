@@ -2,6 +2,7 @@ import collections
 from zatt.client.abstractClient import AbstractClient
 from zatt.client.refresh_policies import RefreshPolicyAlways
 from Crypto.Signature import PKCS1_PSS
+import random
 
 
 
@@ -15,9 +16,12 @@ class DistributedDict(collections.UserDict, AbstractClient):
         self.privateKey = PKCS1_PSS.new(privateKey)
         self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
+        self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
+        addrs = tuple(self.publicKeyMap.keys())
+        self.currentLeader = tuple(random.choice(addrs))
+        print("CURRENT LEADER", self.currentLeader)
         self.refresh_policy = refresh_policy
         self.refresh(force=True)
-        self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
 
     def __getitem__(self, key):
         self.refresh()

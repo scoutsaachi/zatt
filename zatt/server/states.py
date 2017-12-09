@@ -33,24 +33,30 @@ class State:
                              'address': cfg.config.getMyClusterInfo(),
                              'privateKey': cfg.config.getMyPrivateKey(), # an actual signer
                              'clientKey': cfg.config.client_key}
+            self.election_timer = None
             self.log = LogManager(address=self.volatile['address'])
             print(self.volatile['address'], "initializing new log")
             print(self.volatile['address'], "CommitIndex: %d, PrepareIndex:%s, LogIndex: %s" % (self.log.commitIndex, self.log.prepareIndex, self.log.index))
             self._update_cluster()
+        self.view_change_messages = {} # Map of term -> view change messages for that term (for terms for which you are a valid leader)
         self.stats = TallyCounter(['read', 'write', 'append'])
+
+    def getLeaderForTerm(term):
+        index = term % len(self.volatile['cluster'])
+        return self.volatile['cluster'][index]
 
     def data_received_peer(self, peer, msg):
         """Receive peer messages from orchestrator and pass them to the
         appropriate method."""
         logger.debug('Received %s from %s', msg['type'], peer)
 
-        if self.persist['currentTerm'] < msg['term']:
-            self.persist['currentTerm'] = msg['term']
-            if not type(self) is Follower:
-                logger.info('Remote term is higher, converting to Follower')
-                self.orchestrator.change_state(Follower)
-                self.orchestrator.state.data_received_peer(peer, msg)
-                return
+        # if self.persist['currentTerm'] < msg['term']:
+        #     self.persist['currentTerm'] = msg['term']
+        #     if not type(self) is Follower:
+        #         logger.info('Remote term is higher, converting to Follower')
+        #         self.orchestrator.change_state(Follower)
+        #         self.orchestrator.state.data_received_peer(peer, msg)
+        #         return
         method = getattr(self, 'on_peer_' + msg['type'], None)
         if method:
             method(peer, msg)
@@ -69,11 +75,20 @@ class State:
 
     def on_client_append(self, protocol, msg):
         """Redirect client to leader upon receiving a client_append message."""
+        entryIndex = self.log.log.findEntry(msg['data'])
+        if entryIndex != -1:
+            protocol.send({'type': 'result', 'success': True, 'proof':self.proofOfCommit, 'log':tuple(self.log.log.data), 'index': entryIndex})
+            print("Found entry immediately so just sending it back")
+            return
+
+        if self.election_timer is None:
+            self.start_election_timer()
+
         msg = {'type': 'redirect',
-               'leader': self.volatile['leaderId']}
+            'leader': self.volatile['leaderId']}
         protocol.send(msg)
         logger.debug('Redirect client %s:%s to leader',
-                     *protocol.transport.get_extra_info('peername'))
+                    *protocol.transport.get_extra_info('peername'))
 
     def on_client_config(self, protocol, msg):
         """Redirect client to leader upon receiving a client_config message."""
@@ -112,7 +127,107 @@ class State:
             if entry['data']['key'] == 'cluster':
                 self.volatile['cluster'] = entry['data']['value']
         self.volatile['cluster'] = tuple(map(tuple, self.volatile['cluster']))
+    
+    def on_peer_view_change(self, peer, msg):
 
+        # validate that the peer actually send this message
+        proposedTerm = msg['term']
+        if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
+            assert False # TODO remove
+            return
+
+        # should this message be for us
+        if self.getLeaderForTerm(term) != self.volatile['address']:
+            assert False # TODO remove
+            return
+        
+        # this person has committed entries we don't even know about - we can't be leader for this term
+        if msg['commitIndex'] > len(self.log.index):
+            return
+
+        # validate commit point and prepare point on incoming message
+        hypothetical_new_log = self.log.log.data[:(msg['commitIndex'] + 1)] + msg['logAfterCommit']
+        commitIndex = msg['commitIndex']
+        prepareIndex = commitIndex + len(msg['logAfterCommit'])
+
+        calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
+        if not calcPrepare == prepareIndex or not calcCommit == commitIndex:
+            assert False
+            return
+        
+        if commitIndex > self.log.commitIndex:
+            self.log.commit(commitIndex)
+            
+        if proposedTerm not in self.view_change_messages:
+            self.view_change_messages[proposedTerm] = [(peer, msg)]
+        else:
+            self.view_change_messages[proposedTerm].append((peer, msg))
+            
+        quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1
+        if len(self.view_change_messages[proposedTerm]) == quorum_size:
+            self.send_new_view(proposedTerm)
+    
+    def get_latest_element_from_log(logSlice, commitIndex):
+        if len(logSlice) == 0:
+            return 
+
+    def on_peer_new_view(self, peer, msg):
+        # validate from peer
+        if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
+            assert False # TODO remove
+            return
+        if msg['term'] <= self.persist['currentTerm']:
+            return
+
+        quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1 #2f
+        if len(msg['proof']) < quorum_size:
+            assert False
+            return # not enough messages to convince that new view
+        
+        for proofPeer, proofMsg in msg['proof']:
+            if (not validateDict(proofMsg, self.volatile['publicKeyMap'][proofPeer])):
+                assert False
+                return
+            if proofMsg['term'] != msg['term']:
+                assert False
+                return # not the right term in proof
+        self.persist['currentTerm'] = msg['term']
+        self.change_follower()
+
+    def send_new_view(self, proposedTerm):
+        peer_messages = self.view_change_messages[proposedTerm]
+        messages = [pm[1] for pm in peer_messages]
+        extra_log_entries = []
+        latest_term = -1
+        longest = -1
+        latestProof = {}
+        for msg in messages:
+            logAfterCommit = msg['logAfterCommit']
+            if len(logAfterCommit) > 0:
+                lastTerm = logAfterCommit[len(logAfterCommit) - 1].term
+                if lastTerm > latest_term:
+                    latest_term = lastTerm
+                    longest = len(logAfterCommit)
+                    extra_log_entries = logAfterCommit
+                    latestProof = msg['proof']
+                elif lastTerm == latest_term and len(logAfterCommit) > longest:
+                    longest = len(logAfterCommit)
+                    extra_log_entries = logAfterCommit
+                    latestProof = msg['proof']
+        self.log.append_entries(extra_log_entries, self.log.commitIndex)
+
+        new_view_msg = {
+            'type' : 'new_view',
+            'term' : proposedTerm,
+            'proof' : peer_messages
+        }
+        # change ourselves to be a leader
+        self.change_leader(latestProof)
+
+        new_view_msg_signed = signDict(new_view_msg, self.volatile['privateKey'])
+        for (addr in self.volatile['cluster']):
+            if addr != self.volatile['address']:
+                self.orchestator.send_peer(addr, signedMsg)
 
 class Follower(State):
     """Follower state."""
@@ -120,50 +235,58 @@ class Follower(State):
         """Initialize parent and start election timer."""
         super().__init__(old_state, orchestrator)
         self.persist['votedFor'] = None
-        self.restart_election_timer()
+        self.proofOfCommit = None
+        self.currTimeout = 5
+        self.timerStartTime = None
 
     def teardown(self):
         """Stop timers before changing state."""
         self.election_timer.cancel()
+        self.election_timer = None
 
-    def restart_election_timer(self):
+    def start_election_timer(self):
         """Delays transition to the Candidate state by timer."""
-        if hasattr(self, 'election_timer'):
-            self.election_timer.cancel()
+        assert self.election_timer is None
+            # self.election_timer.cancel()
 
-        timeout = randrange(1, 4) * 10 ** (0 if cfg.config.debug else -1)
+        timeout = self.currTimeout
         loop = asyncio.get_event_loop()
         self.election_timer = loop.\
-            call_later(timeout, self.orchestrator.change_state, Candidate)
-        logger.debug('Election timer restarted: %s s', timeout)
+            call_later(timeout, self.orchestrator.change_state, Voter)
+        logger.debug('Election timer started: %s s', timeout)
 
-    def on_peer_request_vote(self, peer, msg):
-        """Grant this node's vote to Candidates."""
-        term_is_current = msg['term'] >= self.persist['currentTerm']
-        can_vote = self.persist['votedFor'] in [tuple(msg['candidateId']),
-                                                None]
-        index_is_current = (msg['lastLogTerm'] > self.log.term() or
-                            (msg['lastLogTerm'] == self.log.term() and
-                             msg['lastLogIndex'] >= self.log.index))
-        granted = term_is_current and can_vote and index_is_current
+    def cancel_election_timer(self):
+        self.election_timer.cancel()
+        self.election_timer = None
+        self.currTimeout = 5
+    
 
-        if granted:
-            self.persist['votedFor'] = msg['candidateId']
-            self.restart_election_timer()
+    # def on_peer_request_vote(self, peer, msg):
+    #     """Grant this node's vote to Candidates."""
+    #     term_is_current = msg['term'] >= self.persist['currentTerm']
+    #     can_vote = self.persist['votedFor'] in [tuple(msg['candidateId']),
+    #                                             None]
+    #     index_is_current = (msg['lastLogTerm'] > self.log.term() or
+    #                         (msg['lastLogTerm'] == self.log.term() and
+    #                          msg['lastLogIndex'] >= self.log.index))
+    #     granted = term_is_current and can_vote and index_is_current
 
-        logger.debug('Voting for %s. Term:%s Vote:%s Index:%s',
-                     peer, term_is_current, can_vote, index_is_current)
+    #     if granted:
+    #         self.persist['votedFor'] = msg['candidateId']
+    #         self.restart_election_timer()
 
-        response = {'type': 'response_vote', 'voteGranted': granted,
-                    'term': self.persist['currentTerm']}
-        self.orchestrator.send_peer(peer, response)
+    #     logger.debug('Voting for %s. Term:%s Vote:%s Index:%s',
+    #                  peer, term_is_current, can_vote, index_is_current)
+
+    #     response = {'type': 'response_vote', 'voteGranted': granted,
+    #                 'term': self.persist['currentTerm']}
+    #     self.orchestrator.send_peer(peer, response)
 
     def on_peer_update(self, peer, msg):
         """Manages incoming log entries from the Leader.
         Data from log compaction is always accepted.
         In the end, the log is scanned for a new cluster config.
         """
-        self.restart_election_timer()
         assert 'compact_data' not in msg
 
         # validate that the leader actually sent this message
@@ -207,9 +330,14 @@ class Follower(State):
                 # we are successful so overwrite with leader's log
                 self.log.append_entries(msg['entries'], msg['prevLogIndex']+1)
                 self.log.prepare(msg['leaderPrepare'])
+                oldCommitIndex = self.log.commitIndex
                 self.log.commit(msg['leaderCommit'])
+                newCommitIndex = self.log.commitIndex
+                if newCommitIndex > oldCommitIndex:
+                    self.cancel_election_timer()
                 logger.debug('Log index is now %s', self.log.index)
                 self.stats.increment('append', len(msg['entries']))
+                self.proofOfCommit = msg['proof']
             self.volatile['leaderId'] = msg['leaderId']
 
         self._update_cluster()
@@ -223,49 +351,76 @@ class Follower(State):
         signedResp = signDict(resp, self.volatile['privateKey'])
         self.orchestrator.send_peer(peer, signedResp)
 
-class Candidate(Follower):
-    """Candidate state. Notice that this state subclasses Follower."""
-    def __init__(self, old_state=None, orchestrator=None):
-        """Initialize parent, increase term, vote for self, ask for votes."""
+class Voter(Follower):
+    def __init__(self, old_state=None, orchestrator=None)
         super().__init__(old_state, orchestrator)
-        self.persist['currentTerm'] += 1
-        self.votes_count = 0
-        logger.info('New Election. Term: %s', self.persist['currentTerm'])
-        self.send_vote_requests()
+        self.election_timer = None
+        self.currTimeout *= 2
+        self.proposedTerm = self.persist['currentTerm'] + 1
 
-        def vote_self():
-            self.persist['votedFor'] = self.volatile['address']
-            self.on_peer_response_vote(
-                self.volatile['address'], {'voteGranted': True})
-        loop = asyncio.get_event_loop()
-        loop.call_soon(vote_self)
-
-    def send_vote_requests(self):
-        """Ask peers for votes."""
-        logger.info('Broadcasting request_vote')
-        msg = {'type': 'request_vote', 'term': self.persist['currentTerm'],
-               'candidateId': self.volatile['address'],
-               'lastLogIndex': self.log.index,
-               'lastLogTerm': self.log.term()}
-        self.orchestrator.broadcast_peers(msg)
+    def send_view_change():
+        leader = self.getLeaderForTerm(self.proposedTerm)
+        if leader == self.volatile['address']:
+            
+        msg = {
+            'type': 'view_change',
+            'term': self.proposedTerm,
+            'proof':self.proofOfCommit,
+            'commitIndex' : self.log.commitIndex,
+            'logAfterCommit' : self.log.log.data[self.log.commitIndex + 1: self.log.prepareIndex + 1]
+        }
+        signedMsg = signDict(msg, self.volatile['privateKey'])
+        self.orchestator.send_peer(leader, signedMsg)
 
     def on_peer_update(self, peer, msg):
-        """Transition back to Follower upon receiving an update RPC."""
-        logger.debug('Converting to Follower')
-        self.orchestrator.change_state(Follower)
-        self.orchestrator.state.on_peer_update(peer, msg)
+        print ("Received an update message in the voter state. Will ignore as view has not been confirmed")
+        return
+    
+    
 
-    def on_peer_response_vote(self, peer, msg):
-        """Register peers votes, transition to Leader upon majority vote."""
-        self.votes_count += msg['voteGranted']
-        logger.info('Vote count: %s', self.votes_count)
-        if self.votes_count > len(self.volatile['cluster']) / 2:
-            self.orchestrator.change_state(Leader)
+# class Candidate(Follower):
+#     """Candidate state. Notice that this state subclasses Follower."""
+#     def __init__(self, old_state=None, orchestrator=None):
+#         """Initialize parent, increase term, vote for self, ask for votes."""
+#         super().__init__(old_state, orchestrator)
+#         self.persist['currentTerm'] += 1
+#         self.votes_count = 0
+#         logger.info('New Election. Term: %s', self.persist['currentTerm'])
+#         self.send_vote_requests()
+
+#         def vote_self():
+#             self.persist['votedFor'] = self.volatile['address']
+#             self.on_peer_response_vote(
+#                 self.volatile['address'], {'voteGranted': True})
+#         loop = asyncio.get_event_loop()
+#         loop.call_soon(vote_self)
+
+#     def send_vote_requests(self):
+#         """Ask peers for votes."""
+#         logger.info('Broadcasting request_vote')
+#         msg = {'type': 'request_vote', 'term': self.persist['currentTerm'],
+#                'candidateId': self.volatile['address'],
+#                'lastLogIndex': self.log.index,
+#                'lastLogTerm': self.log.term()}
+#         self.orchestrator.broadcast_peers(msg)
+
+#     def on_peer_update(self, peer, msg):
+#         """Transition back to Follower upon receiving an update RPC."""
+#         logger.debug('Converting to Follower')
+#         self.orchestrator.change_state(Follower)
+#         self.orchestrator.state.on_peer_update(peer, msg)
+
+#     def on_peer_response_vote(self, peer, msg):
+#         """Register peers votes, transition to Leader upon majority vote."""
+#         self.votes_count += msg['voteGranted']
+#         logger.info('Vote count: %s', self.votes_count)
+#         if self.votes_count > len(self.volatile['cluster']) / 2:
+#             self.orchestrator.change_state(Leader)
 
 
 class Leader(State):
     """Leader state."""
-    def __init__(self, old_state=None, orchestrator=None):
+    def __init__(self, old_state=None, orchestrator=None, proof=None):
         """Initialize parent, sets leader variables, start periodic
         append_entries"""
         super().__init__(old_state, orchestrator)
@@ -274,7 +429,10 @@ class Leader(State):
         self.prePrepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest pre-Prepare point per follower
         self.nextIndexMap = {p: self.log.commitIndex + 1 for p in self.prePrepareIndexMap}
         self.prepareIndexMap = {p: -1 for p in self.volatile['cluster']} # latest prepare position per follower
-        self.latestMessageMap = {p: {} for p in self.volatile['cluster']} # latest update response per follower
+        if proof is None:
+            self.latestMessageMap = {p: {} for p in self.volatile['cluster']} # latest update response per follower
+        else:
+            self.latestMessageMap = proof
         self.waiting_clients = {} # log index -> [protocol for a client]
         self.send_update()
 
@@ -291,10 +449,10 @@ class Leader(State):
         self.update_timer.cancel()
         if hasattr(self, 'config_timer'):
             self.config_timer.cancel()
-        for clients in self.waiting_clients.values():
-            for client in clients:
-                client.send({'type': 'result', 'success': False})
-                logger.error('Sent unsuccessful response to client')
+        # for clients in self.waiting_clients.values():
+        #     for client in clients:
+        #         client.send({'type': 'result', 'success': False})
+        #         logger.error('Sent unsuccessful response to client')
 
     def send_update(self):
         """Send update to the cluster, containing:

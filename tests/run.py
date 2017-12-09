@@ -74,24 +74,24 @@ class BasicTest(unittest.TestCase):
         d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         self.assertEqual(d['adams'], 'the hitchhiker guide')
 
-    def test_2_delete(self):
-        print('Delete test')
-        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
-        d['adams'] = 'the hitchhiker guide'
-        sleep(1)
-        del d['adams']
-        sleep(1)
-        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
-        self.assertEqual(d, {'cluster': self.default_cluster})
+    # def test_2_delete(self):
+    #     print('Delete test')
+    #     d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
+    #     d['adams'] = 'the hitchhiker guide'
+    #     sleep(1)
+    #     del d['adams']
+    #     sleep(1)
+    #     d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
+    #     self.assertEqual(d, {'cluster': self.default_cluster})
 
-    def test_3_read_from_different_client(self):
-        print('Read from different client')
-        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
-        d['adams'] = 'the hitchhiker guide'
-        del d
-        sleep(1)
-        d = DistributedDict('127.0.0.1', 9111, self.clusterMap, self.privateKey)
-        self.assertEqual(d['adams'], 'the hitchhiker guide')
+    # def test_3_read_from_different_client(self):
+    #     print('Read from different client')
+    #     d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
+    #     d['adams'] = 'the hitchhiker guide'
+    #     del d
+    #     sleep(1)
+    #     d = DistributedDict('127.0.0.1', 9111, self.clusterMap, self.privateKey)
+    #     self.assertEqual(d['adams'], 'the hitchhiker guide')
 
     # def test_4_compacted_log_replication(self):
     #     print('Compacted log replication')

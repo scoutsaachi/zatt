@@ -17,10 +17,26 @@ class Orchestrator():
         os.makedirs(cfg.config.getMyStorage(), exist_ok=True)
         self.state = Follower(orchestrator=self)
 
-    def change_state(self, new_state):
+    # def change_state(self, new_state):
+    #     self.state.teardown()
+    #     logger.info('State change:' + new_state.__name__)
+    #     self.state = new_state(old_state=self.state)
+    
+    def change_follower(self):
         self.state.teardown()
-        logger.info('State change:' + new_state.__name__)
-        self.state = new_state(old_state=self.state)
+        logger.info('State change to follower')
+        self.state = Follower(old_state = self.state)
+    
+    def change_voter(self):
+        self.state.teardown()
+        logger.info('State change to Voter')
+        self.state = Voter(old_state = self.state)
+
+    def change_leader(self, proof):
+        self.state.teardown()
+        logger.info('State change to Leader')
+        self.state = Leader(old_state = self.state, proof=proof)
+
 
     def data_received_peer(self, sender, message):
         self.state.data_received_peer(sender, message)
