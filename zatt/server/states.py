@@ -5,7 +5,7 @@ from random import randrange
 from os.path import join
 from zatt.server.utils import PersistentDict, TallyCounter
 from zatt.server.log import LogManager
-from zatt.server.utils import get_kth_smallest, get_quorum_size, validate_entries, signDict, validateDict, getLogHash
+from zatt.server.utils import get_kth_largest, get_quorum_size, validate_entries, signDict, validateDict, getLogHash, validateIndex
 import zatt.server.config as cfg
 import Crypto
 logger = logging.getLogger(__name__)
@@ -158,45 +158,6 @@ class Follower(State):
                     'term': self.persist['currentTerm']}
         self.orchestrator.send_peer(peer, response)
 
-    def validateIndex(self, log_data, leaderPrepare, leaderCommit, proof):
-        """ validate that the leader prepare and commit data are valid"""
-        prePrepareIndices = []
-        prepareIndices = []
-        if len(self.volatile['cluster']) != len(proof):
-            assert False # TODO remove
-            return False
-
-        for peer, msg in proof.items():
-            if (len(msg) == 0): 
-                prePrepareIndices.append(-1)
-                prepareIndices.append(-1)
-                continue # this peer has not put a successful message for this leader
-            if (not validateDict(msg, self.volatile['publicKeyMap'][peer])): 
-                assert False
-                return False
-
-            (peerPrePrepare, peerPrePrepareHash) = msg['prePrepareIndex']
-            (peerPrepare, peerPrepareHash) = msg['prepareIndex']
-
-            if peerPrePrepare >= len(log_data) or peerPrepare >= len(log_data):
-                assert False
-                return False
-            if getLogHash(log_data, peerPrePrepare) != peerPrePrepareHash:
-                assert False
-                return False
-            if getLogHash(log_data, peerPrepare) != peerPrepareHash:
-                assert False
-                return False
-
-            prePrepareIndices.append(peerPrePrepare)
-            prepareIndices.append(peerPrepare)
-
-        quorum_size = get_quorum_size(len(self.volatile['cluster']))
-        # print(quorum_size, len(self.volatile['cluster']), prePrepareIndices)
-        prepareIndex = get_kth_smallest(prePrepareIndices, quorum_size)
-        commitIndex = get_kth_smallest(prepareIndices, quorum_size)
-        return  prepareIndex == leaderPrepare and commitIndex == leaderCommit
-
     def on_peer_update(self, peer, msg):
         """Manages incoming log entries from the Leader.
         Data from log compaction is always accepted.
@@ -232,7 +193,8 @@ class Follower(State):
         else:
             hypothetical_new_log = self.log.log.data[:(msg['prevLogIndex'] + 1)] + entries
             # validate prepare and commit
-            if not self.validateIndex(hypothetical_new_log, msg['leaderPrepare'], msg['leaderCommit'],msg['proof']):
+            calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
+            if not calcPrepare == msg['leaderPrepare'] or not calcCommit == msg['leaderCommit']:
                 assert False
                 return
 
@@ -323,8 +285,6 @@ class Leader(State):
                          'value': tuple(self.volatile['cluster']),
                          'action': 'change'}}],
                 self.log.index+1)
-            # self.log.prepare(self.log.index)
-            # self.log.commit(self.log.index)
 
     def teardown(self):
         """Stop timers before changing state."""
@@ -375,6 +335,11 @@ class Leader(State):
             return False
         status_code = msg['status_code']
         if status_code == 0:
+            if len(self.latestMessageMap[peer]) != 0:
+                oldPrePrepare = self.latestMessageMap[peer]['prePrepareIndex'][0]
+                oldPrepare = self.latestMessageMap[peer]['prepareIndex'][0]
+                # if this message is not the latest message we've received from this peer, then don't substitute
+                if (msg['prePrepareIndex'][0] < oldPrePrepare or msg['prepareIndex'][0] < oldPrepare): return
             self.latestMessageMap[peer] = msg
             self.prePrepareIndexMap[peer] = msg['prePrepareIndex'][0] # only store the indices
             self.nextIndexMap[peer] = msg['prePrepareIndex'][0] + 1
@@ -382,21 +347,32 @@ class Leader(State):
 
             self.prePrepareIndexMap[self.volatile['address']] = self.log.index
             self.nextIndexMap[self.volatile['address']] = self.log.index + 1
-            self.prepareIndexMap[self.volatile['address']] = self.log.prepareIndex
             # look at match index for all followers and see where
             # global commit point is
             quorum_size = get_quorum_size(len(self.prepareIndexMap))
-            prepareIndex = get_kth_smallest(self.prePrepareIndexMap.values(), quorum_size)
+            prepareIndex = get_kth_largest(self.prePrepareIndexMap.values(), quorum_size)
             print(self.volatile['address'], "About to prepare in method on_peer_response updating %d to %d" % (self.log.prepareIndex, prepareIndex))
             self.log.prepare(prepareIndex)
+            self.prepareIndexMap[self.volatile['address']] = self.log.prepareIndex
 
-            commitIndex = get_kth_smallest(self.prepareIndexMap.values(), quorum_size)
+
+            commitIndex = get_kth_largest(self.prepareIndexMap.values(), quorum_size)
             self.log.commit(commitIndex)
+            self.latestMessageMap[self.volatile['address']] = self.createUpdateMessageForSelf()
             self.send_client_append_response() # TODO make sure client has proof of commit
         elif status_code == 1:
             # to aggressive so move index for this peer back one
             self.nextIndexMap[peer] = max(0, self.nextIndexMap[peer] - 1)
         # status_code = 2 do nothing
+
+    def createUpdateMessageForSelf(self):
+        """ create an *update* for ourselves with the latest prePrepareIndex and prepareIndex for the proof """
+        msg = {'status_code': 0, 
+            'prePrepareIndex': (self.log.index, self.log.getHash(self.log.index)),
+            'prepareIndex': (self.log.prepareIndex, self.log.getHash(self.log.prepareIndex))
+        }
+        signedMsg = signDict(msg, self.volatile['privateKey'])
+        return signedMsg
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
@@ -405,7 +381,6 @@ class Leader(State):
             'data': msg['data'],
             'signature': msg['signature'] # signature over just the data
         }
-        print("entry:", entry)
         if not validate_entries([entry], self.volatile['clientKey']):
             assert False # TODO remove
             return
@@ -416,12 +391,7 @@ class Leader(State):
             self.waiting_clients[self.log.index].append(protocol) # schedule client to be notified
         else:
             self.waiting_clients[self.log.index] = [protocol]      
-        msg = {'status_code': 0, 
-            'prePrepareIndex': (self.log.index, self.log.getHash(self.log.index)),
-            'prepareIndex': (self.log.prepareIndex, self.log.getHash(self.log.prepareIndex))
-        }
-        print ("ON_CLIENT_APPEND in LEADER", msg)
-        signedMsg = signDict(msg, self.volatile['privateKey'])
+        signedMsg = self.createUpdateMessageForSelf()
         self.on_peer_response_update(self.volatile['address'], signedMsg)
 
     def send_client_append_response(self):
@@ -430,7 +400,7 @@ class Leader(State):
         for client_index, clients in self.waiting_clients.items():
             if client_index <= self.log.commitIndex:
                 for client in clients:
-                    client.send({'type': 'result', 'success': True})  # TODO
+                    client.send({'type': 'result', 'success': True, 'proof':self.latestMessageMap, 'log':tuple(self.log.log.data), 'index': client_index})  # TODO
                     logger.debug('Sent successful response to client')
                     self.stats.increment('write')
                 to_delete.append(client_index)

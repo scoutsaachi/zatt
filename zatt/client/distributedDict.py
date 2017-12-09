@@ -7,7 +7,7 @@ from Crypto.Signature import PKCS1_PSS
 
 class DistributedDict(collections.UserDict, AbstractClient):
     """Client for zatt instances with dictionary based state machines."""
-    def __init__(self, addr, port, privateKey, append_retry_attempts=3,
+    def __init__(self, addr, port, clusterMap, privateKey, append_retry_attempts=3,
                  refresh_policy=RefreshPolicyAlways()):
         # collections.UserDict().__init__(self)
         # AbstractClient.__init__(self, privateKey)
@@ -17,6 +17,7 @@ class DistributedDict(collections.UserDict, AbstractClient):
         self.append_retry_attempts = append_retry_attempts
         self.refresh_policy = refresh_policy
         self.refresh(force=True)
+        self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
 
     def __getitem__(self, key):
         self.refresh()

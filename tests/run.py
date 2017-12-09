@@ -16,10 +16,17 @@ class BasicTest(unittest.TestCase):
         key = RSA.generate(2048)
         self.privateKey = key
         publicKey = key.publickey()
+        nodeKeys = [RSA.generate(2048) for i in range(4)] # these are the node keys
+
         print('BasicTest setup')
-        self.pool = Pool(4, publicKey)
+        self.pool = Pool(4, nodeKeys, publicKey)
         self.pool.start(self.pool.ids)
-        self.default_cluster = set([('127.0.0.1', 9110), ('127.0.0.1', 9112), ('127.0.0.1', 9111), ('127.0.0.1', 9113)])
+
+        clusterAddresses = [("127.0.0.1", 9110 + i) for i in range(4)] # [(ip_addr, port)]
+        self.default_cluster = set(clusterAddresses)
+
+        # the client needs to know the mapping to public keys
+        self.clusterMap = {k : nodeKeys[i].publickey() for i,k in enumerate(clusterAddresses)} #[(ip_addr, port) -> public key]
         sleep(5) # sleep to wait for servers to set up
 
     def tearDown(self):
@@ -59,31 +66,31 @@ class BasicTest(unittest.TestCase):
 
     def test_1_append(self):
         print('Append test')
-        d = DistributedDict('127.0.0.1', 9110, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         d['adams'] = 'the hitchhiker guide'
         del d
         sleep(1)
         print ("APPENDING NOW")
-        d = DistributedDict('127.0.0.1', 9110, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         self.assertEqual(d['adams'], 'the hitchhiker guide')
 
     def test_2_delete(self):
         print('Delete test')
-        d = DistributedDict('127.0.0.1', 9110, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         d['adams'] = 'the hitchhiker guide'
         sleep(1)
         del d['adams']
         sleep(1)
-        d = DistributedDict('127.0.0.1', 9110, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         self.assertEqual(d, {'cluster': self.default_cluster})
 
     def test_3_read_from_different_client(self):
         print('Read from different client')
-        d = DistributedDict('127.0.0.1', 9110, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9110, self.clusterMap, self.privateKey)
         d['adams'] = 'the hitchhiker guide'
         del d
         sleep(1)
-        d = DistributedDict('127.0.0.1', 9111, self.privateKey)
+        d = DistributedDict('127.0.0.1', 9111, self.clusterMap, self.privateKey)
         self.assertEqual(d['adams'], 'the hitchhiker guide')
 
     # def test_4_compacted_log_replication(self):
