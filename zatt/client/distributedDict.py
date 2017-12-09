@@ -1,13 +1,18 @@
 import collections
 from zatt.client.abstractClient import AbstractClient
 from zatt.client.refresh_policies import RefreshPolicyAlways
+from Crypto.Signature import PKCS1_PSS
+
 
 
 class DistributedDict(collections.UserDict, AbstractClient):
     """Client for zatt instances with dictionary based state machines."""
     def __init__(self, addr, port, privateKey, append_retry_attempts=3,
                  refresh_policy=RefreshPolicyAlways()):
-        super().__init__(privateKey)
+        # collections.UserDict().__init__(self)
+        # AbstractClient.__init__(self, privateKey)
+        super().__init__()
+        self.privateKey = PKCS1_PSS.new(privateKey)
         self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
         self.refresh_policy = refresh_policy

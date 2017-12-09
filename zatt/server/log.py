@@ -46,7 +46,7 @@ class Log(collections.UserList):
         if only one entry, start = end
         """
         # if (!utils.validateEntries(entries)) return
-
+        entries = list(entries)
         if len(self.data) >= start:
             self.replace(self.data[:start] + entries)
         else:
@@ -145,7 +145,7 @@ class LogManager:
         else:
             return self[index]['term']
     def getHash(self, index):
-        self.log.getHash(index)
+        return self.log.getHash(index)
 
 
     # def pre_prepare_entries(self, entries, prevLogIndex):

@@ -10,8 +10,10 @@ from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA256
 from Crypto.Signature import PKCS1_PSS
 import Crypto
-from pprint import pformat
-
+import pickle
+import marshal
+import ast
+import hashlib
 MAX_MSGPACK_ARRAY_HEADER_LEN = 5
 logger = logging.getLogger(__name__)
 
@@ -196,28 +198,41 @@ def importClientPrivateKey(directoryName):
     f.close()
     return key
 
+def createDictDigest(msg):
+    h = SHA256.new()
+    h.update(pickle.dumps(ast.literal_eval(repr(msg))))
+    return h
 
 def validateSignature(message, signature, pk):
     """ pk should be a verifier """
-    h = SHA256.new()
-    h.update(pformat(message).encode('utf-8'))
+
+    # h = SHA256.new()
+    # h.update(pickle.dumps(ast.literal_eval(repr(message))))
     # verifier = PKCS1_PSS.new(pk)
     # return verifier.verify(h, signature)
-    return pk.verify(h, signature)
+    isValid = pk.verify(createDictDigest(message), signature)
+    assert isValid # TODO remove
+    return isValid
 
 def sign(msg, sk):
     """ return a signed version of the message digest with the given secret key
         sk should be a signer object """
-    h = SHA256.new()
-    h.update(pformat(msg).encode('utf-8'))
+    # h = SHA256.new()
+    # h.update(pickle.dumps(ast.literal_eval(repr(msg))))
     # signer = PKCS1_PSS.new(sk)
     # return signer.sign(h)
-    return sk.sign(h)
+    return sk.sign(createDictDigest(msg))
 
 def getLogHash(log, index):
-    digest = SHA256.new()
-    digest.update(pformat(log[:index + 1]).encode('utf-8'))
-    return digest
+    logslice = log[:index+1]
+    strRep = pickle.dumps(ast.literal_eval(repr(logslice)))
+    hashVal = hashlib.md5(strRep).digest()
+    # hashval =  createDictDigest(log[:index + 1])
+    # print ("GETLOGHASH", log, index, hashVal)
+    return hashVal
+    # digest = SHA256.new()
+    # digest.update(pformat(log[:index + 1]).encode('utf-8'))
+    # return digest
 
 def validateDict(message, pk):
     """ assuming that signature is in the message, validate if the signature is
@@ -226,17 +241,22 @@ def validateDict(message, pk):
     signature = message['signature']
     message['signature'] = 0
     isValid = validateSignature(message, signature, pk)
+    # print("VALIDATE", isValid, message)
     message['signature'] = signature
     return isValid
 
 def signDict(message, sk):
     message['signature'] = 0
     s = sign(message, sk)
+    # print("SIGN", message)
     message['signature'] = s 
     return message
 
 def validate_entries(entries, client_pk):
     """ validate that all entries in entries are signed by the client """
     for entry in entries:
-        if not validateDict(entry['data'], client_pk): return False
+        if(entry['data']['key'] == 'cluster'): continue
+        signature = entry['signature']
+        if not validateSignature(entry['data'], signature, client_pk): return False
+        # if not validateDict(entry['data'], client_pk): return False
     return True
