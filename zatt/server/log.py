@@ -41,8 +41,10 @@ class Log(collections.UserList):
         # if (!utils.validateEntries(entries)) return
         entries = list(entries)
         if len(self.data) >= start:
+            old_index = len(self.data)
             self.replace(self.data[:start] + entries)
-            if entries != []:
+            new_index = len(self.data)
+            if new_index > old_index:
                 entryVals = [{'data': entry['data'], 'term' : entry['term']} for entry in self.data]
                 print("Appending entries to log. New log is :", entryVals)
 
@@ -168,7 +170,7 @@ class LogManager:
     def prepare(self, leaderPrepare):
         assert self.prepareIndex <= leaderPrepare
         if leaderPrepare > self.prepareIndex:
-            print(self.address, 'Advancing prepare to %s' % self.prepareIndex)    
+            print(self.address, 'Advancing prepare to %s' % leaderPrepare)    
         self.prepareIndex = leaderPrepare    
 
     def compact(self):

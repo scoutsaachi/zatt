@@ -146,9 +146,9 @@ class State:
             self.log.commit(commitIndex)
             
         if proposedTerm not in self.view_change_messages:
-            self.view_change_messages[proposedTerm] = [(peer, msg)]
-        else:
-            self.view_change_messages[proposedTerm].append((peer, msg))
+            self.view_change_messages[proposedTerm] = {}
+
+        self.view_change_messages[proposedTerm][peer] = msg
             
         quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1
         if len(self.view_change_messages[proposedTerm]) == quorum_size:
@@ -169,7 +169,7 @@ class State:
         if len(msg['proof']) < quorum_size:
             return # not enough messages to convince that new view
         
-        for proofPeer, proofMsg in msg['proof']:
+        for proofPeer, proofMsg in msg['proof'].items():
             if (not validateDict(proofMsg, self.volatile['publicKeyMap'][proofPeer])):
                 return
             if proofMsg['term'] != msg['term']:
@@ -179,7 +179,7 @@ class State:
         self.orchestrator.change_follower()
 
     def send_new_view(self, proposedTerm):
-        peer_messages = self.view_change_messages[proposedTerm]
+        peer_messages = [tuple(i) for i in self.view_change_messages[proposedTerm].items()]
         messages = [pm[1] for pm in peer_messages]
         extra_log_entries = []
         latest_term = -1
@@ -203,7 +203,7 @@ class State:
         new_view_msg = {
             'type' : 'new_view',
             'term' : proposedTerm,
-            'proof' : tuple(peer_messages)
+            'proof' : self.view_change_messages[proposedTerm]
         }
         # change ourselves to be a leader
         print(self.volatile['address'], " has received enough view change messages and is now the leader")
