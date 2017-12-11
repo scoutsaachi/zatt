@@ -18,8 +18,8 @@ class DistributedDict(collections.UserDict, AbstractClient):
         self.append_retry_attempts = append_retry_attempts
         self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
         addrs = tuple(self.publicKeyMap.keys())
+        self.data['cluster'] = set(self.publicKeyMap.keys())
         self.currentLeader = tuple(random.choice(addrs))
-        print("CURRENT LEADER", self.currentLeader)
         self.refresh_policy = refresh_policy
         self.refresh(force=True)
 

@@ -2,7 +2,7 @@ import asyncio
 import os
 import msgpack
 import logging
-from zatt.server.states import Follower
+from zatt.server.states import Voter, Follower, Leader
 import zatt.server.config as cfg
 from zatt.server.utils import extended_msgpack_serializer
 
@@ -15,7 +15,7 @@ class Orchestrator():
     Only one Orchestrator """
     def __init__(self):
         os.makedirs(cfg.config.getMyStorage(), exist_ok=True)
-        self.state = Follower(orchestrator=self)
+        self.state = Voter(orchestrator=self)
 
     # def change_state(self, new_state):
     #     self.state.teardown()

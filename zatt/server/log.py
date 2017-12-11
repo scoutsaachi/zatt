@@ -16,7 +16,7 @@ class Log(collections.UserList):
         super().__init__()
         self.path = os.path.join(cfg.config.getMyStorage(), 'log')
         #  load
-        logger.debug('Initializing log')
+        # logger.debug('Initializing log')
         if erase_log and os.path.isfile(self.path):
             os.remove(self.path)
             logger.debug('Using parameters')
@@ -60,10 +60,10 @@ class Compactor():
         self.data = data
         self.path = os.path.join(cfg.config.getMyStorage(), 'compact')
         #  load
-        logger.debug('Initializing compactor')
+        # logger.debug('Initializing compactor')
         if count or term or data:
             self.persist()
-            logger.debug('Using parameters')
+            # logger.debug('Using parameters')
         elif os.path.isfile(self.path):
             with open(self.path, 'rb') as f:
                 self.__dict__.update(msgpack.unpack(f, encoding='utf-8'))
@@ -152,33 +152,31 @@ class LogManager:
 
     def commit(self, leaderCommit):
         assert self.commitIndex <= leaderCommit
+        if leaderCommit > self.commitIndex:
+            print(self.address, 'Advancing commit to %s' % leaderCommit)
         self.commitIndex = leaderCommit  # no overshoots
-        print(self.address, 'Advancing commit to %s' % self.commitIndex)
+        
         # above is the actual commit operation, just incrementing the counter!
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
-        print('State machine: %s' % self.state_machine.data)
         # self.compaction_timer_touch()
     
     def prepare(self, leaderPrepare):
         assert self.prepareIndex <= leaderPrepare
         self.prepareIndex = leaderPrepare
-        print(self.address, 'Advancing prepare to %s' % self.prepareIndex)        
+        if leaderPrepare > self.prepareIndex:
+            print(self.address, 'Advancing prepare to %s' % self.prepareIndex)        
 
     def compact(self):
         del self.compaction_timer
         if self.commitIndex - self.compacted.count < 60:
             return
-        print('Compaction started')
         not_compacted_log = self[self.state_machine.lastApplied + 1:]
         self.compacted.data = self.state_machine.data.copy()
         self.compacted.term = self.term(self.state_machine.lastApplied)
         self.compacted.count = self.state_machine.lastApplied + 1
         self.compacted.persist()
         self.log.replace(not_compacted_log)
-
-        print('Compacted: %s'% self.compacted.data)
-        print('Log: %s' % self.log.data)
 
     def compaction_timer_touch(self):
         """Periodically initiates compaction."""

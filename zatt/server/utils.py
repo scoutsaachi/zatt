@@ -217,22 +217,13 @@ def validateSignature(message, signature, pk):
 def sign(msg, sk):
     """ return a signed version of the message digest with the given secret key
         sk should be a signer object """
-    # h = SHA256.new()
-    # h.update(pickle.dumps(ast.literal_eval(repr(msg))))
-    # signer = PKCS1_PSS.new(sk)
-    # return signer.sign(h)
     return sk.sign(createDictDigest(msg))
 
 def getLogHash(log, index):
     logslice = log[:index+1]
     strRep = pickle.dumps(ast.literal_eval(repr(logslice)))
     hashVal = hashlib.md5(strRep).digest()
-    # hashval =  createDictDigest(log[:index + 1])
-    # print ("GETLOGHASH", log, index, hashVal)
     return hashVal
-    # digest = SHA256.new()
-    # digest.update(pformat(log[:index + 1]).encode('utf-8'))
-    # return digest
 
 def validateDict(message, pk):
     """ assuming that signature is in the message, validate if the signature is
@@ -241,14 +232,12 @@ def validateDict(message, pk):
     signature = message['signature']
     message['signature'] = 0
     isValid = validateSignature(message, signature, pk)
-    # print("VALIDATE", isValid, message)
     message['signature'] = signature
     return isValid
 
 def signDict(message, sk):
     message['signature'] = 0
     s = sign(message, sk)
-    # print("SIGN", message)
     message['signature'] = s 
     return message
 
@@ -295,8 +284,6 @@ def validateIndex(log_data, proof, publicKeyMap, numNodes):
             prepareIndices.append(peerPrepare)
 
         quorum_size = get_quorum_size(numNodes)
-        # print(quorum_size, len(self.volatile['cluster']), prePrepareIndices)
         prepareIndex = get_kth_largest(prePrepareIndices, quorum_size)
         commitIndex = get_kth_largest(prepareIndices, quorum_size)
         return prepareIndex, commitIndex
-        # return  prepareIndex == leaderPrepare and commitIndex == leaderCommit

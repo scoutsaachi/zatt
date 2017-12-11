@@ -97,6 +97,9 @@ class AbstractClient:
         sock = self.get_socket(message, addr)
         sock.settimeout(5)
         resp = self._read_bytes(sock)
+        if resp == None:
+            assert False
+            return None, None
         if 'type' in resp and resp['type'] == 'redirect':
             return None, tuple(resp['leader'])
         isValid = self.validate_response(message, resp)
@@ -108,9 +111,9 @@ class AbstractClient:
 
     def _get_state(self):
         """Retrive remote state machine."""
-        self.server_address = tuple(random.choice(tuple(self.data['cluster'])))
+        # self.server_address = tuple(random.choice(tuple(self.data['cluster'])))
         resp = self._request({'type': 'get'})
-        resp['cluster'] = set( [tuple(c) for c in resp['cluster']] )
+        resp['cluster'] = self.data['cluster']
         return resp
 
     def _append_log(self, payload):
