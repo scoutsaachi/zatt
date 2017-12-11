@@ -35,8 +35,6 @@ class State:
                              'clientKey': cfg.config.client_key}
             self.election_timer = None
             self.log = LogManager(address=self.volatile['address'])
-            print(self.volatile['address'], "initializing new log")
-            print(self.volatile['address'], "CommitIndex: %d, PrepareIndex:%s, LogIndex: %s" % (self.log.commitIndex, self.log.prepareIndex, self.log.index))
             self._update_cluster()
         self.view_change_messages = {} # Map of term -> view change messages for that term (for terms for which you are a valid leader)
         self.stats = TallyCounter(['read', 'write', 'append'])
@@ -50,13 +48,6 @@ class State:
         appropriate method."""
         logger.debug('Received %s from %s', msg['type'], peer)
 
-        # if self.persist['currentTerm'] < msg['term']:
-        #     self.persist['currentTerm'] = msg['term']
-        #     if not type(self) is Follower:
-        #         logger.info('Remote term is higher, converting to Follower')
-        #         self.orchestrator.change_state(Follower)
-        #         self.orchestrator.state.data_received_peer(peer, msg)
-        #         return
         method = getattr(self, 'on_peer_' + msg['type'], None)
         if method:
             method(peer, msg)
@@ -122,12 +113,6 @@ class State:
         """Scans compacted log and log, looking for the latest cluster
         configuration."""
         return
-        # if 'cluster' in self.log.compacted.data:
-        #     self.volatile['cluster'] = self.log.compacted.data['cluster']
-        # for entry in (self.log if entries is None else entries):
-        #     if entry['data']['key'] == 'cluster':
-        #         self.volatile['cluster'] = entry['data']['value']
-        # self.volatile['cluster'] = tuple(map(tuple, self.volatile['cluster']))
     
     def on_peer_view_change(self, peer, msg):
 
@@ -135,12 +120,10 @@ class State:
         proposedTerm = msg['term']
 
         if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
-            assert False # TODO remove
             return
 
         # should this message be for us
         if self.getLeaderForTerm(proposedTerm) != self.volatile['address']:
-            assert False # TODO remove
             return
         
         # this person has committed entries we don't even know about - we can't be leader for this term
@@ -157,7 +140,6 @@ class State:
         if (msg['proof'] is not None):
             calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
         if not calcPrepare == prepareIndex or not calcCommit == commitIndex:
-            assert False
             return
         
         if commitIndex > self.log.commitIndex:
@@ -179,22 +161,18 @@ class State:
     def on_peer_new_view(self, peer, msg):
         # validate from peer
         if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
-            assert False # TODO remove
             return
         if msg['term'] <= self.persist['currentTerm']:
             return
 
         quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1 #2f
         if len(msg['proof']) < quorum_size:
-            assert False
             return # not enough messages to convince that new view
         
         for proofPeer, proofMsg in msg['proof']:
             if (not validateDict(proofMsg, self.volatile['publicKeyMap'][proofPeer])):
-                assert False
                 return
             if proofMsg['term'] != msg['term']:
-                assert False
                 return # not the right term in proof
         self.persist['currentTerm'] = msg['term']
         print(self.volatile['address'], " has received and validated a new_view message and is now reverting to follower state in term:", msg['term'])
@@ -254,8 +232,6 @@ class Follower(State):
 
     def start_election_timer(self):
         """Delays transition to the Candidate state by timer."""
-        assert self.election_timer is None
-            # self.election_timer.cancel()
 
         timeout = self.currTimeout
         loop = asyncio.get_event_loop()
@@ -268,49 +244,23 @@ class Follower(State):
             self.election_timer.cancel()
             self.election_timer = None
         self.currTimeout = 5
-    
-
-    # def on_peer_request_vote(self, peer, msg):
-    #     """Grant this node's vote to Candidates."""
-    #     term_is_current = msg['term'] >= self.persist['currentTerm']
-    #     can_vote = self.persist['votedFor'] in [tuple(msg['candidateId']),
-    #                                             None]
-    #     index_is_current = (msg['lastLogTerm'] > self.log.term() or
-    #                         (msg['lastLogTerm'] == self.log.term() and
-    #                          msg['lastLogIndex'] >= self.log.index))
-    #     granted = term_is_current and can_vote and index_is_current
-
-    #     if granted:
-    #         self.persist['votedFor'] = msg['candidateId']
-    #         self.restart_election_timer()
-
-    #     logger.debug('Voting for %s. Term:%s Vote:%s Index:%s',
-    #                  peer, term_is_current, can_vote, index_is_current)
-
-    #     response = {'type': 'response_vote', 'voteGranted': granted,
-    #                 'term': self.persist['currentTerm']}
-    #     self.orchestrator.send_peer(peer, response)
 
     def on_peer_update(self, peer, msg):
         """Manages incoming log entries from the Leader.
         Data from log compaction is always accepted.
         In the end, the log is scanned for a new cluster config.
         """
-        assert 'compact_data' not in msg
 
         # validate that the leader actually sent this message
         # TODO validate that this leader is a valid leader
         if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
-            assert False # TODO remove
             return
 
         entries = list(msg['entries'])
         # validate that the entries proposed are all signed by the client
         if not validate_entries(entries, self.volatile['clientKey']):
-            assert False # TODO remove
             return
 
-        assert self.log.commitIndex <= msg['leaderCommit']
         status_code = 0
         # check for prev log index match
         term_is_current = msg['term'] >= self.persist['currentTerm']
@@ -327,7 +277,6 @@ class Follower(State):
             # validate prepare and commit
             calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
             if not calcPrepare == msg['leaderPrepare'] or not calcCommit == msg['leaderCommit']:
-                assert False
                 return
 
             # either we don't need to overwrite a prepare or the leader
@@ -401,48 +350,6 @@ class Voter(Follower):
     def on_peer_update(self, peer, msg):
         print ("Received an update message in the voter state. Will ignore as view has not been confirmed")
         return
-    
-    
-
-# class Candidate(Follower):
-#     """Candidate state. Notice that this state subclasses Follower."""
-#     def __init__(self, old_state=None, orchestrator=None):
-#         """Initialize parent, increase term, vote for self, ask for votes."""
-#         super().__init__(old_state, orchestrator)
-#         self.persist['currentTerm'] += 1
-#         self.votes_count = 0
-#         logger.info('New Election. Term: %s', self.persist['currentTerm'])
-#         self.send_vote_requests()
-
-#         def vote_self():
-#             self.persist['votedFor'] = self.volatile['address']
-#             self.on_peer_response_vote(
-#                 self.volatile['address'], {'voteGranted': True})
-#         loop = asyncio.get_event_loop()
-#         loop.call_soon(vote_self)
-
-#     def send_vote_requests(self):
-#         """Ask peers for votes."""
-#         logger.info('Broadcasting request_vote')
-#         msg = {'type': 'request_vote', 'term': self.persist['currentTerm'],
-#                'candidateId': self.volatile['address'],
-#                'lastLogIndex': self.log.index,
-#                'lastLogTerm': self.log.term()}
-#         self.orchestrator.broadcast_peers(msg)
-
-#     def on_peer_update(self, peer, msg):
-#         """Transition back to Follower upon receiving an update RPC."""
-#         logger.debug('Converting to Follower')
-#         self.orchestrator.change_state(Follower)
-#         self.orchestrator.state.on_peer_update(peer, msg)
-
-#     def on_peer_response_vote(self, peer, msg):
-#         """Register peers votes, transition to Leader upon majority vote."""
-#         self.votes_count += msg['voteGranted']
-#         logger.info('Vote count: %s', self.votes_count)
-#         if self.votes_count > len(self.volatile['cluster']) / 2:
-#             self.orchestrator.change_state(Leader)
-
 
 class Leader(State):
     """Leader state."""
@@ -462,23 +369,11 @@ class Leader(State):
         self.waiting_clients = {} # log index -> [protocol for a client]
         self.send_update()
 
-        # if 'cluster' not in self.log.state_machine:
-        #     self.log.append_entries([
-        #         {'term': self.persist['currentTerm'],
-        #          'data':{'key': 'cluster',
-        #                  'value': tuple(self.volatile['cluster']),
-        #                  'action': 'change'}}],
-        #         self.log.index+1)
-
     def teardown(self):
         """Stop timers before changing state."""
         self.update_timer.cancel()
         if hasattr(self, 'config_timer'):
             self.config_timer.cancel()
-        # for clients in self.waiting_clients.values():
-        #     for client in clients:
-        #         client.send({'type': 'result', 'success': False})
-        #         logger.error('Sent unsuccessful response to client')
 
     def send_update(self):
         """Send update to the cluster, containing:
@@ -500,8 +395,6 @@ class Leader(State):
             msg.update({'prevLogTerm': self.log.term(msg['prevLogIndex'])})
             msg = signDict(msg, self.volatile['privateKey'])
 
-            if self.nextIndexMap[peer] <= self.log.compacted.index:
-                assert False # should never happen since we're not compacting
             logger.debug('Sending %s entries to %s. Start index %s',
                          len(msg['entries']), peer, self.nextIndexMap[peer])
             self.orchestrator.send_peer(peer, msg)
@@ -515,7 +408,6 @@ class Leader(State):
         If successful RPC, try to commit new entries.
         If RPC unsuccessful, backtrack."""
         if not validateDict(msg, self.volatile['publicKeyMap'][peer]):
-            assert False # TODO remove
             return False
         status_code = msg['status_code']
         if status_code == 0:
@@ -565,7 +457,6 @@ class Leader(State):
             'signature': msg['signature'] # signature over just the data
         }
         if not validate_entries([entry], self.volatile['clientKey']):
-            assert False # TODO remove
             return
         if msg['data']['key'] == 'cluster': # cannot have a key named cluster
             protocol.send({'type': 'result', 'success': False})

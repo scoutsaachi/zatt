@@ -1,7 +1,12 @@
 import collections
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__),'../../'))
 from zatt.client.abstractClient import AbstractClient
 from zatt.client.refresh_policies import RefreshPolicyAlways
+from zatt.server.utils import importClientPrivateKey
 from Crypto.Signature import PKCS1_PSS
+from zatt.server.config import Config
 import random
 
 
@@ -13,7 +18,10 @@ class DistributedDict(collections.UserDict, AbstractClient):
         # collections.UserDict().__init__(self)
         # AbstractClient.__init__(self, privateKey)
         super().__init__()
-        self.privateKey = PKCS1_PSS.new(privateKey)
+        if privateKey is not None:
+            self.privateKey = PKCS1_PSS.new(privateKey)
+            
+        
         self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
         self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
@@ -53,6 +61,11 @@ class DistributedDict(collections.UserDict, AbstractClient):
                 break
         # TODO: logging
         return response
+
+def createClientDict(addr, port, config):
+    config = Config.CreateConfig(config, -1, False)
+    print(config.private_key)
+    return DistributedDict(addr, port, config.cluster, config.private_key)
 
 if __name__ == '__main__':
     import sys

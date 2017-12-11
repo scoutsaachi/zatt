@@ -68,12 +68,10 @@ class AbstractClient:
         if ('type' in resp and resp['type'] == 'result'):
             _, calcCommit = validateIndex(list(resp['log']), resp['proof'], self.publicKeyMap, len(self.publicKeyMap))
             if (calcCommit < resp['index'] or len(resp['log']) <= resp['index']):
-                assert False
                 return False
             else:
                 givenVal = resp['log'][resp['index']]['data']
                 if givenVal != message['data']:
-                    assert False
                     return False
         return True
     
@@ -87,7 +85,7 @@ class AbstractClient:
                 buff += block
             resp = msgpack.unpackb(buff, encoding='utf-8', use_list=False)
         except socket.timeout:
-            print("TIMED OUT")
+            print("Timed out waiting for a response. ")
             return None
         sock.close()
         return resp

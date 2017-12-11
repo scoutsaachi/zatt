@@ -163,7 +163,7 @@ def createAndWriteKeys(directoryName, n):
 
 def importPublicKeys(directoryName, n):
     """ give the key directory and the expected number of public keys"""
-    public_dir = "%s/public_keys" % directoryName
+    public_dir = "../../%s/public_keys" % directoryName
     keys = []
     for i in range(n):
         filename = "%s/%d.pem" % (public_dir, i)
@@ -175,7 +175,7 @@ def importPublicKeys(directoryName, n):
 
 def importPrivateKey(directoryName, id):
     """ give the key directory and the id for the private key we are retreiving"""
-    filename = "%s/private_keys/%d.pem" % (directoryName, id)
+    filename = "../../%s/private_keys/%d.pem" % (directoryName, id)
     assert os.path.exists(filename)
     f = open(filename, 'r')
     key = RSA.importKey(f.read())
@@ -183,7 +183,7 @@ def importPrivateKey(directoryName, id):
     return key
 
 def importClientPublicKey(directoryName):
-    filename = "%s/public_keys/client_key.pem" % (directoryName)
+    filename = "../../%s/public_keys/client_key.pem" % (directoryName)
     assert os.path.exists(filename)
     f = open(filename, 'r')
     key = RSA.importKey(f.read())
@@ -191,7 +191,7 @@ def importClientPublicKey(directoryName):
     return key
 
 def importClientPrivateKey(directoryName):
-    filename = "%s/private_keys/client_key.pem" % (directoryName)
+    filename = "../../%s/private_keys/client_key.pem" % (directoryName)
     assert os.path.exists(filename)
     f = open(filename, 'r')
     key = RSA.importKey(f.read())

@@ -1,5 +1,5 @@
 import json
-import utils
+import zatt.server.utils as utils
 from Crypto.Signature import PKCS1_PSS
 
 config = None # global config variable! set in main.py
@@ -37,17 +37,20 @@ class Config:
         assert "keyDir" in d
         keyDir = d["keyDir"]
         n = d["cluster"]
-        # get the public keys
-        public_keys = utils.importPublicKeys(keyDir, n)
-        assert len(public_keys) == n
+        # get the public keys g
+        public_keys = utils.importPublicKeys(keyDir, len(n))
+        assert len(public_keys) == len(n)
         # get the private key
-        private_key = utils.importPrivateKey(keyDir, nodeId)
+        if nodeId == -1:
+            private_key = utils.importClientPrivateKey(keyDir)
+        else:
+            private_key = utils.importPrivateKey(keyDir, nodeId)
         client_key = utils.importClientPublicKey(keyDir)
         clusterMap = {}
-        for i, l in d["cluster"]:
+        for i, l in enumerate(d["cluster"]):
             assert len(l) == 2
             clusterMap[(l[0], l[1])] = public_keys[i] # (addr, port) -> public key
-        address = d["cluster"][nodeId]
+        address = tuple(d["cluster"][nodeId])
         return Config(d["StorageDir"], clusterMap, nodeId, private_key, address, client_key, debug)
     
     """ Get the storage information for one node"""
