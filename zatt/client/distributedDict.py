@@ -11,6 +11,7 @@ import random
 
 
 
+# private key and clusterMap are verifiers
 class DistributedDict(collections.UserDict, AbstractClient):
     """Client for zatt instances with dictionary based state machines."""
     def __init__(self, addr, port, clusterMap, privateKey, append_retry_attempts=3,
@@ -19,12 +20,12 @@ class DistributedDict(collections.UserDict, AbstractClient):
         # AbstractClient.__init__(self, privateKey)
         super().__init__()
         if privateKey is not None:
-            self.privateKey = PKCS1_PSS.new(privateKey)
+            self.privateKey = privateKey
             
         
         self.data['cluster'] = set([(addr, port)])
         self.append_retry_attempts = append_retry_attempts
-        self.publicKeyMap = {k:PKCS1_PSS.new(val) for k,val in clusterMap.items()}
+        self.publicKeyMap = clusterMap
         addrs = tuple(self.publicKeyMap.keys())
         self.data['cluster'] = set(self.publicKeyMap.keys())
         self.currentLeader = tuple(random.choice(addrs))
@@ -64,7 +65,6 @@ class DistributedDict(collections.UserDict, AbstractClient):
 
 def createClientDict(addr, port, config):
     config = Config.CreateConfig(config, -1, False)
-    print(config.private_key)
     return DistributedDict(addr, port, config.cluster, config.private_key)
 
 if __name__ == '__main__':

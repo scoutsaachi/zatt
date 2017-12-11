@@ -7,6 +7,7 @@ from utils import Pool
 from multiprocessing import Process
 from zatt.client import DistributedDict
 from Crypto.PublicKey import RSA
+from Crypto.Signature import PKCS1_PSS
 
 
 class BasicTest(unittest.TestCase):
@@ -14,7 +15,7 @@ class BasicTest(unittest.TestCase):
     def setUp(self):
         self.maxDiff = None
         key = RSA.generate(2048)
-        self.privateKey = key
+        self.privateKey = PKCS1_PSS.new(key)
         publicKey = key.publickey()
         nodeKeys = [RSA.generate(2048) for i in range(4)] # these are the node keys
 
@@ -26,7 +27,7 @@ class BasicTest(unittest.TestCase):
         self.default_cluster = set(clusterAddresses)
 
         # the client needs to know the mapping to public keys
-        self.clusterMap = {k : nodeKeys[i].publickey() for i,k in enumerate(clusterAddresses)} #[(ip_addr, port) -> public key]
+        self.clusterMap = {k : PKCS1_PSS.new(nodeKeys[i].publickey()) for i,k in enumerate(clusterAddresses)} #[(ip_addr, port) -> public key]
         sleep(5) # sleep to wait for servers to set up
 
     def tearDown(self):
