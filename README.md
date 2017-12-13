@@ -52,7 +52,7 @@ Now create a config file `config.json` with the following content:
  }
 ```
 
-You can now descend into the server directory and run the first node. 
+You can now descend into the server directory (`$cd zatt/server`) and run the first node. 
 
 `$ python3 -c ABSOLUTE_PATH_TO_BATTLESHIP_CONFIG  0`
 
@@ -63,7 +63,7 @@ You can do the same to run the other three nodes, with ids 1, 2, and 3.
 
 ### Client
 
-To interact with the cluster, we need a client. Navigate down into the client directory and open a
+To interact with the cluster, we need a client. Navigate down into the client directory (`$cd zatt/client`) and open a
  python interpreter (`$ python3`) and run the following commands:
 
 ```
@@ -72,7 +72,7 @@ In [2]: d = createClientDict('127.0.0.1', 9110, "ABSOLUTE_PATH_TO_CONFIG_FILE")
 In [3]: d['key'] = 'value'
 ```
 
-Let's retrieve `key1` from a second client:
+Let's retrieve `key` from a second client:
 
 Open the python interpreter on another terminal and run:
 
@@ -95,3 +95,6 @@ In order to run the tests:
 
 * navigate to the test folder: `cd zatt/tests`
 * execute: `python3 run.py`
+
+If you stop the tests mid-run, be sure to remove any persistent storage output by the tests by typing `rm -rf persistentStorage` in 
+the tests directory. 
