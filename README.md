@@ -12,7 +12,7 @@ Please note that Battleship servers and clients must both be run using python3.
 
 ## Structure of the project
 
-The most relevant part of the code concerning BFT Raft is in the [states](https://github.com/scoutsaachi/zatt/blob/develop/zatt/server/states.py) and in the [log](https://github.com/scoutsaachi/zatt/blob/develop/zatt/server/log.py) files.
+The most relevant part of the code concerning BFT Raft is in the [states](https://github.com/scoutsaachi/zatt/blob/master/zatt/server/states.py) and in the [log](https://github.com/scoutsaachi/zatt/blob/master/zatt/server/log.py) files.
 
 ## How to run
 
