@@ -36,7 +36,7 @@ class State:
             self.election_timer = None
             self.log = LogManager(address=self.volatile['address'])
             self._update_cluster()
-        self.view_change_messages = {} # Map of term -> view change messages for that term (for terms for which you are a valid leader)
+        self.term_change_messages = {} # Map of term -> term change messages for that term (for terms for which you are a valid leader)
         self.stats = TallyCounter(['read', 'write', 'append'])
 
     def getLeaderForTerm(self, term):
@@ -114,7 +114,7 @@ class State:
         configuration."""
         return
     
-    def on_peer_view_change(self, peer, msg):
+    def on_peer_term_change(self, peer, msg):
 
         # validate that the peer actually send this message
         proposedTerm = msg['term']
@@ -145,20 +145,20 @@ class State:
         if commitIndex > self.log.commitIndex:
             self.log.commit(commitIndex)
             
-        if proposedTerm not in self.view_change_messages:
-            self.view_change_messages[proposedTerm] = {}
+        if proposedTerm not in self.term_change_messages:
+            self.term_change_messages[proposedTerm] = {}
 
-        self.view_change_messages[proposedTerm][peer] = msg
+        self.term_change_messages[proposedTerm][peer] = msg
             
         quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1
-        if len(self.view_change_messages[proposedTerm]) == quorum_size:
-            self.send_new_view(proposedTerm)
+        if len(self.term_change_messages[proposedTerm]) == quorum_size:
+            self.send_new_term(proposedTerm)
     
     def get_latest_element_from_log(logSlice, commitIndex):
         if len(logSlice) == 0:
             return 
 
-    def on_peer_new_view(self, peer, msg):
+    def on_peer_new_term(self, peer, msg):
         # validate from peer
         if (not validateDict(msg, self.volatile['publicKeyMap'][peer])):
             return
@@ -167,7 +167,7 @@ class State:
 
         quorum_size = get_quorum_size(len(self.volatile['cluster'])) - 1 #2f
         if len(msg['proof']) < quorum_size:
-            return # not enough messages to convince that new view
+            return # not enough messages to convince that new term
         
         for proofPeer, proofMsg in msg['proof'].items():
             if (not validateDict(proofMsg, self.volatile['publicKeyMap'][proofPeer])):
@@ -175,11 +175,11 @@ class State:
             if proofMsg['term'] != msg['term']:
                 return # not the right term in proof
         self.persist['currentTerm'] = msg['term']
-        print(self.volatile['address'], " has received and validated a new_view message and is now reverting to follower state in term:", msg['term'])
+        print(self.volatile['address'], " has received and validated a new_term message and is now reverting to follower state in term:", msg['term'])
         self.orchestrator.change_follower()
 
-    def send_new_view(self, proposedTerm):
-        peer_messages = [tuple(i) for i in self.view_change_messages[proposedTerm].items()]
+    def send_new_term(self, proposedTerm):
+        peer_messages = [tuple(i) for i in self.term_change_messages[proposedTerm].items()]
         messages = [pm[1] for pm in peer_messages]
         extra_log_entries = []
         latest_term = -1
@@ -200,20 +200,20 @@ class State:
                     latestProof = msg['proof']
         self.log.append_entries(extra_log_entries, self.log.commitIndex)
 
-        new_view_msg = {
-            'type' : 'new_view',
+        new_term_msg = {
+            'type' : 'new_term',
             'term' : proposedTerm,
-            'proof' : self.view_change_messages[proposedTerm]
+            'proof' : self.term_change_messages[proposedTerm]
         }
         # change ourselves to be a leader
-        print(self.volatile['address'], " has received enough view change messages and is now the leader")
+        print(self.volatile['address'], " has received enough term change messages and is now the leader")
         self.persist['currentTerm'] = proposedTerm
         self.orchestrator.change_leader(latestProof)
 
-        new_view_msg_signed = signDict(new_view_msg, self.volatile['privateKey'])
+        new_term_msg_signed = signDict(new_term_msg, self.volatile['privateKey'])
         for addr in self.volatile['cluster']:
             if addr != self.volatile['address']:
-                self.orchestrator.send_peer(addr, new_view_msg_signed)
+                self.orchestrator.send_peer(addr, new_term_msg_signed)
 
 class Follower(State):
     """Follower state."""
@@ -318,23 +318,23 @@ class Voter(Follower):
 
         timeout = 1
         loop = asyncio.get_event_loop()
-        self.view_change_timer = loop.call_later(timeout, self.send_view_change)
+        self.term_change_timer = loop.call_later(timeout, self.send_term_change)
 
     def teardown(self):
         if self.election_timer is not None: 
             self.election_timer.cancel()
             self.election_timer = None
 
-        self.view_change_timer.cancel()
-        self.view_change_timer = None
+        self.term_change_timer.cancel()
+        self.term_change_timer = None
 
-    def send_view_change(self):
+    def send_term_change(self):
         leader = self.getLeaderForTerm(self.proposedTerm)
         if leader == self.volatile['address']:
             return
             
         msg = {
-            'type': 'view_change',
+            'type': 'term_change',
             'term': self.proposedTerm,
             'proof':self.proofOfCommit,
             'commitIndex' : self.log.commitIndex,
@@ -345,10 +345,10 @@ class Voter(Follower):
 
         timeout = randrange(1, 4) * 10 ** (-1 if cfg.config.debug else -2) 
         loop = asyncio.get_event_loop()
-        self.view_change_timer = loop.call_later(timeout, self.send_view_change)
+        self.term_change_timer = loop.call_later(timeout, self.send_term_change)
 
     def on_peer_update(self, peer, msg):
-        print ("Received an update message in the voter state. Will ignore as view has not been confirmed")
+        print ("Received an update message in the voter state. Will ignore as term has not been confirmed")
         return
 
 class Leader(State):
