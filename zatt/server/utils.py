@@ -123,7 +123,6 @@ def get_kth_largest(l, k):
 
 # get 2f +1
 def get_quorum_size(n):
-    assert (n-1) % 3 == 0
     return math.ceil((float(n-1)*(2/3)) + 1)
 
 # -------- KEY UTILS ------------
@@ -205,13 +204,7 @@ def createDictDigest(msg):
 
 def validateSignature(message, signature, pk):
     """ pk should be a verifier """
-
-    # h = SHA256.new()
-    # h.update(pickle.dumps(ast.literal_eval(repr(message))))
-    # verifier = PKCS1_PSS.new(pk)
-    # return verifier.verify(h, signature)
     isValid = pk.verify(createDictDigest(message), signature)
-    assert isValid # TODO remove
     return isValid
 
 def sign(msg, sk):
@@ -255,7 +248,6 @@ def validateIndex(log_data, proof, publicKeyMap, numNodes):
         prePrepareIndices = []
         prepareIndices = []
         if numNodes != len(proof):
-            assert False # TODO remove
             return -2,-2
 
         for peer, msg in proof.items():
@@ -263,21 +255,17 @@ def validateIndex(log_data, proof, publicKeyMap, numNodes):
                 prePrepareIndices.append(-1)
                 prepareIndices.append(-1)
                 continue # this peer has not put a successful message for this leader
-            if (not validateDict(msg, publicKeyMap[peer])): 
-                assert False
+            if (not validateDict(msg, publicKeyMap[peer])):
                 return -2,-2
 
             (peerPrePrepare, peerPrePrepareHash) = msg['prePrepareIndex']
             (peerPrepare, peerPrepareHash) = msg['prepareIndex']
 
             if peerPrePrepare >= len(log_data) or peerPrepare >= len(log_data):
-                assert False
                 return -2,-2
             if getLogHash(log_data, peerPrePrepare) != peerPrePrepareHash:
-                assert False
                 return -2,-2
             if getLogHash(log_data, peerPrepare) != peerPrepareHash:
-                assert False
                 return -2,-2
 
             prePrepareIndices.append(peerPrePrepare)

@@ -139,7 +139,7 @@ class State:
         calcCommit = commitIndex
         if (msg['proof'] is not None):
             calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
-        if not calcPrepare == prepareIndex or not calcCommit == commitIndex:
+        if calcPrepare == -2 or not calcPrepare == prepareIndex or not calcCommit == commitIndex:
             return
         
         if commitIndex > self.log.commitIndex:
@@ -276,7 +276,7 @@ class Follower(State):
             hypothetical_new_log = self.log.log.data[:(msg['prevLogIndex'] + 1)] + entries
             # validate prepare and commit
             calcPrepare, calcCommit = validateIndex(hypothetical_new_log, msg['proof'], self.volatile['publicKeyMap'], len(self.volatile['cluster']))
-            if not calcPrepare == msg['leaderPrepare'] or not calcCommit == msg['leaderCommit']:
+            if calcPrepare == -2 or not calcPrepare == msg['leaderPrepare'] or not calcCommit == msg['leaderCommit']:
                 return
 
             # either we don't need to overwrite a prepare or the leader

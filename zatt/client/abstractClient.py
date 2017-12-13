@@ -67,6 +67,7 @@ class AbstractClient:
     def validate_response(self, message, resp):
         if ('type' in resp and resp['type'] == 'result'):
             _, calcCommit = validateIndex(list(resp['log']), resp['proof'], self.publicKeyMap, len(self.publicKeyMap))
+            if (calcCommit == -2): return False
             if (calcCommit < resp['index'] or len(resp['log']) <= resp['index']):
                 return False
             else:
@@ -96,7 +97,6 @@ class AbstractClient:
         sock.settimeout(5)
         resp = self._read_bytes(sock)
         if resp == None:
-            assert False
             return None, None
         if 'type' in resp and resp['type'] == 'redirect':
             return None, tuple(resp['leader'])
