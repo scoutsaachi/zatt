@@ -1,52 +1,20 @@
-# [Zatt](https://github.com/simonacca/zatt)
+# [Battleship](https://github.com/scoutsaachi/zatt)
 
-Zatt is a distributed storage system built on the [Raft](https://raft.github.io/)
-consensus algorithm.
+Battleship is a Byzantine fault tolerant prototype of a distributed storage system built on the [Raft](https://raft.github.io/) consensus algorithm. This project was originally forked from 
+[Zatt](https://github.com/simonacca/zatt)
 
 By default, clients share a `dict` data structure, although every python object
 is potentially replicable with the `pickle` state machine.
 
-![Zatt Logo](docs/logo.png?raw=true "Zatt Logo")
+![Zatt Logo](docs/logo.jpg?raw=true "Zatt Logo")
 
-Please note that the **client** is compatible with both `python2` and `python3`,
-while the **server** makes heavy use of the asynchronous programming library
-`asyncio` and is therefore python3-only. This won't affect compatibility with
-legacy code since the server is standalone.
+Please note that Battleship servers and clients must both be run using python3.
 
 ## Structure of the project
 
-The most relevant part of the code concerning Raft is in the [states](https://github.com/simonacca/zatt/blob/develop/zatt/server/states.py) and in the [log](https://github.com/simonacca/zatt/blob/develop/zatt/server/log.py) files.
+The most relevant part of the code concerning BFT Raft is in the [states](https://github.com/scoutsaachi/zatt/blob/develop/zatt/server/states.py) and in the [log](https://github.com/scoutsaachi/zatt/blob/develop/zatt/server/log.py) files.
 
-TODO: extend
-
-## Installing
-Both the server and the client are shipped in the same
-[package](https://pypi.python.org/pypi/raft/)
-(Note: this link won't work until the project is public).
-
-Zatt can be installed by several means:
-
-### Pypi
-`$ pip3 install zatt`. (Note: this won't work until the project is public).
-
-### Pip and Git
-`$ pip3 install git+ssh://github.com/simonacca/zatt.git@develop`
-
-### Cloning
-```
-$ git clone git@github.com:simonacca/zatt.git
-$ cd zatt
-$ git checkout develop
-$ python3 setup.py install
-```
-
-Regardless of the installation method, `$ zattd --help` should work at this point.
-
-## Examples
-
-This screencast shows a basic usage of the code. The code run can be found below.
-
-[![asciicast](https://asciinema.org/a/7o8bpyfxh0r1uaxvpfi7u8tjl.png)](https://asciinema.org/a/7o8bpyfxh0r1uaxvpfi7u8tjl)
+## How to run
 
 
 ### Spinning up a cluster of servers
@@ -57,36 +25,51 @@ in this example, we are going to use both.
 First, create an empty folder and enter it:
 `$ mkdir zatt_cluster && cd zatt_cluster`.
 
-Now create a config file `zatt.conf` with the following content:
+Now create a config file `config.json` with the following content:
 ```
-{"cluster": {
-    "0": ["127.0.0.1", 5254],
-    "1": ["127.0.0.1", 5255],
-    "2": ["127.0.0.1", 5256]
+{  
+    "StorageDir":"zatt_cluster/storage",
+    "keyDir":"zatt_cluster/keys",
+    "cluster":[  
+       [  
+          "127.0.0.1",
+          9110
+
+       ],
+       [  
+          "127.0.0.1",
+          9111
+       ],
+       [  
+          "127.0.0.1",
+          9112
+       ],
+       [  
+          "127.0.0.1",
+          9113
+       ]
+    ]
  }
-}
 ```
 
-You can now run the first node:
+You can now descend into the server directory and run the first node. 
 
-`$ zattd -c zatt.conf --id 0 -s zatt.0.persist --debug`
+`$ python3 -c ABSOLUTE_PATH_TO_BATTLESHIP_CONFIG  0`
 
 This tells zattd to run the node with `id:0`, taking the info about address and port from the config file.
 
-Now you can spin up a second node: open another terminal, navigate to `zatt_cluster` and issue:
+You can do the same to run the other three nodes, with ids 1, 2, and 3. 
 
-`$ zattd -c zatt.conf --id 2 -s zatt.2.persist --debug`
-
-Repeat for a third node, this time with `id:2`
 
 ### Client
 
-To interact with the cluster, we need a client. Open a python interpreter (`$ python`) and run the following commands:
+To interact with the cluster, we need a client. Navigate down into the client directory and open a
+ python interpreter (`$ python3`) and run the following commands:
 
 ```
-In [1]: from zatt.client import DistributedDict
-In [2]: d = DistributedDict('127.0.0.1', 5254)
-In [3]: d['key1'] = 0
+In [1]: from distributedDict import createClientDict
+In [2]: d = createClientDict('127.0.0.1', 9110, "ABSOLUTE_PATH_TO_CONFIG_FILE")
+In [3]: d['key'] = 'value'
 ```
 
 Let's retrieve `key1` from a second client:
@@ -94,31 +77,21 @@ Let's retrieve `key1` from a second client:
 Open the python interpreter on another terminal and run:
 
 ```
-In [1]: from zatt.client import DistributedDict
-In [2]: d = DistributedDict('127.0.0.1', 5254)
-In [3]: d['key1']
-Out[3]: 0
-In [4]: d
-Out[4]: {'key1': 0}
+In [1]: from distributedDict import createClientDict
+In [2]: d = createClientDict('127.0.0.1', 9111, "ABSOLUTE_PATH_TO_CONFIG_FILE")
+In [3]: d['key']
+Out[3]: 'value'
 ```
 
 ### Notes
 
-Please note that in order to erase the log of a node, the corresponding `zatt.{id}.persist` folder has to be removed.
+Please note that you may need to remove the persistent storage for the node in order for
+it to run properly. You can do so by going to the zatt_cluster directory and executing (`$ rm -rf storage`)
 
 Also note that JSON, currently used for serialization, only supports keys of type `str` and values of type `int, float, str, bool, list, dict `.
 
 ## Tests
 In order to run the tests:
 
-* clone the repo if you haven't done so already: `git clone git@github.com:simonacca/zatt.git`
 * navigate to the test folder: `cd zatt/tests`
 * execute: `python3 run.py`
-
-## Contributing
-
-TODO
-
-## License
-
-TODO
